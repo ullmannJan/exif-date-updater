@@ -2,7 +2,7 @@
 
 A Python tool to analyze and update missing EXIF date information in image and video files.
 
-<img width="1804" height="1247" alt="image" src="https://github.com/user-attachments/assets/cadd5c35-a5b2-47fe-98d7-b749c6eb5dd2" />
+<img width="1804" height="1247" alt="image" src="https://github.com/user-attachments/assets/7f9dbc29-a742-44cb-89a6-cb5b171aab6d" />
 
 ## Features
 
