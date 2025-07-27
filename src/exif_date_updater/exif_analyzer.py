@@ -2,11 +2,10 @@
 EXIF Date Analyzer - Core module for analyzing and extracting date information from media files.
 """
 
-import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import List, Optional, Union
 
 import exifread
 from PIL import Image
@@ -37,9 +36,8 @@ class MediaFile:
         # Analysis results
         self.missing_dates: List[str] = []
         self.suggested_date: Optional[datetime] = None
-        self.confidence: float = 0.0
         self.source: Optional[str] = None
-        self.available_sources: List[tuple] = []  # List of (date, confidence, source_name) tuples
+        self.available_sources: List[tuple] = []  # List of (date, source_name) tuples
 
 
 class ExifAnalyzer:
@@ -51,13 +49,28 @@ class ExifAnalyzer:
     
     # Date patterns commonly found in filenames
     DATE_PATTERNS = [
-        r'(\d{4})[-_](\d{2})[-_](\d{2})',  # YYYY-MM-DD or YYYY_MM_DD
-        r'(\d{4})(\d{2})(\d{2})',          # YYYYMMDD
-        r'(\d{2})[-_](\d{2})[-_](\d{4})',  # DD-MM-YYYY or DD_MM_YYYY
-        r'(\d{2})(\d{2})(\d{4})',          # DDMMYYYY
-        r'IMG_(\d{4})(\d{2})(\d{2})',      # IMG_YYYYMMDD
-        r'VID_(\d{4})(\d{2})(\d{2})',      # VID_YYYYMMDD
-        r'(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})',  # YYYY-MM-DD_HH-MM-SS
+        # Date and time patterns
+        r'(\d{4})[-_](\d{2})[-_](\d{2})[-_](\d{2})[-_](\d{2})[-_](\d{2})',  # YYYY-MM-DD-HH-MM-SS or YYYY_MM_DD_HH_MM_SS
+        r'(\d{4})(\d{2})(\d{2})[-_](\d{2})(\d{2})(\d{2})',                  # YYYYMMDD-HHMMSS or YYYYMMDD_HHMMSS
+        r'(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})',                      # YYYYMMDDHHMMSS
+        r'(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})',                 # YYYY-MM-DD_HH-MM-SS
+        r'(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})',                 # YYYY-MM-DDTHH:MM:SS (ISO-like)
+        r'IMG_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})',                 # IMG_YYYYMMDD_HHMMSS
+        r'VID_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})',                 # VID_YYYYMMDD_HHMMSS
+        r'(\d{4})[-_](\d{2})[-_](\d{2})[-_](\d{2})\.(\d{2})\.(\d{2})',      # YYYY-MM-DD-HH.MM.SS
+        r'(\d{4})(\d{2})(\d{2})[-_](\d{2})\.(\d{2})\.(\d{2})',              # YYYYMMDD-HH.MM.SS
+        
+        # Date-only patterns (fallback)
+        r'(\d{4})[-_](\d{2})[-_](\d{2})',                                    # YYYY-MM-DD or YYYY_MM_DD
+        r'(\d{4})(\d{2})(\d{2})',                                            # YYYYMMDD
+        r'(\d{2})[-_](\d{2})[-_](\d{4})',                                    # DD-MM-YYYY or DD_MM_YYYY
+        r'(\d{2})(\d{2})(\d{4})',                                            # DDMMYYYY
+        r'IMG_(\d{4})(\d{2})(\d{2})',                                        # IMG_YYYYMMDD
+        r'VID_(\d{4})(\d{2})(\d{2})',                                        # VID_YYYYMMDD
+        
+        # Screenshot patterns with timestamps
+        r'Screenshot_(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})',      # Screenshot_YYYY-MM-DD-HH-MM-SS
+        r'Screen Shot (\d{4})-(\d{2})-(\d{2}) at (\d{1,2})\.(\d{2})\.(\d{2})', # Screen Shot YYYY-MM-DD at H.MM.SS
     ]
     
     def __init__(self):
@@ -220,20 +233,36 @@ class ExifAnalyzer:
                 try:
                     groups = match.groups()
                     
-                    # Handle different date formats
+                    # Initialize default values
+                    year, month, day = None, None, None
+                    hour, minute, second = 0, 0, 0
+                    
+                    # Handle different date formats based on number of groups and first group length
                     if len(groups) >= 3:
-                        if len(groups[0]) == 4:  # Year first
+                        if len(groups[0]) == 4:  # Year first format (YYYY-MM-DD...)
                             year, month, day = int(groups[0]), int(groups[1]), int(groups[2])
-                        else:  # Day first
+                            
+                            # Extract time components if available
+                            if len(groups) >= 6:  # Has time components
+                                hour = int(groups[3])
+                                minute = int(groups[4])
+                                second = int(groups[5])
+                            elif len(groups) == 4:  # Special case for some formats
+                                # Could be hour only, skip for now
+                                pass
+                                
+                        elif len(groups[0]) == 2 and len(groups[2]) == 4:  # Day first format (DD-MM-YYYY)
                             day, month, year = int(groups[0]), int(groups[1]), int(groups[2])
-                        
-                        # Add time if available
-                        hour = int(groups[3]) if len(groups) > 3 else 0
-                        minute = int(groups[4]) if len(groups) > 4 else 0
-                        second = int(groups[5]) if len(groups) > 5 else 0
-                        
-                        media_file.filename_date = datetime(year, month, day, hour, minute, second)
-                        break
+                            
+                        elif len(groups[0]) == 2 and len(groups[1]) == 2 and len(groups[2]) == 4:  # DDMMYYYY
+                            day, month, year = int(groups[0]), int(groups[1]), int(groups[2])
+                            
+                        # Validate date components
+                        if year and month and day:
+                            if 1 <= month <= 12 and 1 <= day <= 31 and 1990 <= year <= 2100:
+                                if 0 <= hour <= 23 and 0 <= minute <= 59 and 0 <= second <= 59:
+                                    media_file.filename_date = datetime(year, month, day, hour, minute, second)
+                                    break
                         
                 except (ValueError, IndexError):
                     continue
@@ -249,38 +278,73 @@ class ExifAnalyzer:
             media_file.missing_dates.append('DateCreated')
     
     def _suggest_date(self, media_file: MediaFile):
-        """Suggest the best available date for missing fields."""
+        """Suggest the best available date for missing fields, prioritizing the earliest date."""
         candidates = []
         
-        # Prioritize different date sources
+        # Collect all available date sources in order of preference
         if media_file.datetime_original:
-            candidates.append((media_file.datetime_original, 1.0, 'EXIF DateTimeOriginal'))
+            candidates.append((media_file.datetime_original, 'EXIF DateTimeOriginal'))
+        
+        if media_file.date_created:
+            candidates.append((media_file.date_created, 'EXIF DateTime'))
         
         if media_file.datetime_digitized:
-            candidates.append((media_file.datetime_digitized, 0.9, 'EXIF DateTimeDigitized'))
+            candidates.append((media_file.datetime_digitized, 'EXIF DateTimeDigitized'))
         
         if media_file.video_creation_date:
-            candidates.append((media_file.video_creation_date, 0.8, 'Video Creation Date'))
+            candidates.append((media_file.video_creation_date, 'Video Creation Date'))
         
         if media_file.filename_date:
-            candidates.append((media_file.filename_date, 0.7, 'Filename Date'))
+            candidates.append((media_file.filename_date, 'Filename Date'))
         
         if media_file.creation_date:
-            candidates.append((media_file.creation_date, 0.5, 'File Creation Date'))
+            candidates.append((media_file.creation_date, 'File Creation Date'))
         
         if media_file.modification_date:
-            candidates.append((media_file.modification_date, 0.3, 'File Modification Date'))
+            candidates.append((media_file.modification_date, 'File Modification Date'))
+        
+        # Filter out obviously invalid dates (future dates or dates before digital photography era)
+        valid_candidates = []
+        for date, source in candidates:
+            if date.year >= 1990 and date <= datetime.now():
+                valid_candidates.append((date, source))
         
         # Store all available sources
-        media_file.available_sources = candidates.copy()
+        media_file.available_sources = valid_candidates.copy()
         
-        # Select the best candidate
-        if candidates:
-            best_date, confidence, source = max(candidates, key=lambda x: x[1])
-            if media_file.missing_dates:  # Only suggest if there are missing dates
-                media_file.suggested_date = best_date
-                media_file.confidence = confidence
-                media_file.source = source
+        # Only suggest if there are missing dates
+        if not media_file.missing_dates or not valid_candidates:
+            return
+        
+        # Priority logic: If one EXIF date exists and the other is missing, use the existing one
+        best_date = None
+        source = None
+        
+        # Check for existing EXIF dates to use as suggestions for missing counterparts
+        if 'DateTimeOriginal' in media_file.missing_dates and media_file.date_created:
+            # DateTimeOriginal is missing but DateCreated exists - use DateCreated
+            best_date = media_file.date_created
+            source = 'EXIF DateTime'
+        elif 'DateCreated' in media_file.missing_dates and media_file.datetime_original:
+            # DateCreated is missing but DateTimeOriginal exists - use DateTimeOriginal
+            best_date = media_file.datetime_original
+            source = 'EXIF DateTimeOriginal'
+        
+        # If no EXIF date prioritization applies, use the original earliest-date logic
+        if not best_date:
+            # Define reliable sources (non-file system dates)
+            reliable_sources = {'EXIF DateTimeOriginal', 'EXIF DateTime', 'EXIF DateTimeDigitized', 'Video Creation Date', 'Filename Date'}
+            reliable_candidates = [c for c in valid_candidates if c[1] in reliable_sources]
+            
+            if reliable_candidates:
+                # Among reliable sources, choose the earliest date
+                best_date, source = min(reliable_candidates, key=lambda x: x[0])
+            else:
+                # If no reliable sources, fall back to earliest of all available dates
+                best_date, source = min(valid_candidates, key=lambda x: x[0])
+        
+        media_file.suggested_date = best_date
+        media_file.source = source
     
     def _parse_exif_datetime(self, date_str: str) -> Optional[datetime]:
         """Parse EXIF datetime string."""

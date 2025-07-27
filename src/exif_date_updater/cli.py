@@ -47,7 +47,7 @@ def print_file_analysis(media_files: List[MediaFile]):
         # Show suggestion
         if file.suggested_date:
             print(f"Suggested date: {file.suggested_date} "
-                  f"(confidence: {file.confidence:.1%}, source: {file.source})")
+                  f"(source: {file.source})")
         else:
             print("No date suggestion available")
         

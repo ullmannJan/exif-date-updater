@@ -19,6 +19,14 @@ from .exif_analyzer import ExifAnalyzer, MediaFile
 from .exif_updater import ExifUpdater
 
 
+class NoScrollComboBox(QComboBox):
+    """QComboBox that ignores wheel events to prevent interfering with table scrolling."""
+    
+    def wheelEvent(self, event):
+        """Ignore wheel events to allow table scrolling."""
+        event.ignore()
+
+
 class AnalysisWorker(QThread):
     """Worker thread for analyzing media files."""
     
@@ -87,6 +95,9 @@ class ExifDateUpdaterGUI(QMainWindow):
         self.setWindowTitle("EXIF Date Updater")
         self.setGeometry(100, 100, 1200, 800)
         
+        # Enable drag and drop
+        self.setAcceptDrops(True)
+        
         # Data
         self.folder_path: Optional[Path] = None
         self.media_files: List[MediaFile] = []
@@ -103,7 +114,7 @@ class ExifDateUpdaterGUI(QMainWindow):
         # Status bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Ready")
+        self.status_bar.showMessage("Ready - Drop a folder here or use the Select Folder button")
     
     def setup_ui(self):
         """Setup the user interface."""
@@ -114,11 +125,13 @@ class ExifDateUpdaterGUI(QMainWindow):
         
         # Top section - Folder selection
         folder_group = QGroupBox("Folder Selection")
+        folder_group.setToolTip("Drag and drop a folder here or use the Select Folder button")
         folder_layout = QHBoxLayout(folder_group)
         
-        self.folder_label = QLabel("No folder selected")
+        self.folder_label = QLabel("No folder selected - Drag a folder here or click Select Folder")
         self.folder_label.setStyleSheet("QLabel { color: palette(disabled-text); font-style: italic; }")
         self.select_folder_btn = QPushButton("Select Folder")
+        self.select_folder_btn.setToolTip("Select a folder containing media files (or drag and drop a folder into the window)")
         self.analyze_btn = QPushButton("Analyze Files")
         self.analyze_btn.setEnabled(False)
         
@@ -146,13 +159,28 @@ class ExifDateUpdaterGUI(QMainWindow):
         self.show_all_files_cb = QCheckBox("Show all files (including those with complete EXIF data)")
         self.show_all_files_cb.setChecked(False)
         table_options_layout.addWidget(self.show_all_files_cb)
+        
+        # Add select all/none buttons
+        self.select_all_btn = QPushButton("Select All")
+        self.select_none_btn = QPushButton("Select None")
+        self.select_missing_btn = QPushButton("Select Reliable Sources")
+        
+        self.select_all_btn.setToolTip("Select all files that can be updated")
+        self.select_none_btn.setToolTip("Deselect all files")
+        self.select_missing_btn.setToolTip("Select only files with reliable date sources (EXIF, video metadata, filename dates)")
+        
         table_options_layout.addStretch()
+        table_options_layout.addWidget(QLabel("Selection:"))
+        table_options_layout.addWidget(self.select_all_btn)
+        table_options_layout.addWidget(self.select_none_btn)
+        table_options_layout.addWidget(self.select_missing_btn)
+        
         table_layout.addLayout(table_options_layout)
         
         self.file_table = QTableWidget()
         self.file_table.setColumnCount(7)
         self.file_table.setHorizontalHeaderLabels([
-            "Filename", "DateTimeOriginal", "DateTime/DateCreated", "Suggested Date", "Source", "Confidence", "Size"
+            "Update", "Filename", "DateTimeOriginal", "DateTime/DateCreated", "Suggested Date", "Source", "Size"
         ])
         
         # Add tooltips to column headers
@@ -163,30 +191,32 @@ class ExifDateUpdaterGUI(QMainWindow):
         for col in range(self.file_table.columnCount()):
             item = self.file_table.horizontalHeaderItem(col)
             if item:
-                if col == 1:
-                    item.setToolTip("Current DateTimeOriginal EXIF value (empty if missing)")
+                if col == 0:
+                    item.setToolTip("Check to include this file in the update process")
+                elif col == 1:
+                    item.setToolTip("Filename")
                 elif col == 2:
-                    item.setToolTip("Current DateTime/DateCreated EXIF value (empty if missing)")
+                    item.setToolTip("Current DateTimeOriginal EXIF value (empty if missing)")
                 elif col == 3:
-                    item.setToolTip("Suggested date based on selected source")
+                    item.setToolTip("Current DateTime/DateCreated EXIF value (empty if missing)")
                 elif col == 4:
-                    item.setToolTip("Select date source from available options")
+                    item.setToolTip("Suggested date based on selected source")
                 elif col == 5:
-                    item.setToolTip("Confidence level of selected source")
+                    item.setToolTip("Select date source from available options")
                 elif col == 6:
                     item.setToolTip("File size in bytes")
         
         # Make table responsive
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)  # Filename
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # DateTimeOriginal
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # DateTime/DateCreated
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Suggested Date
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)  # Source (dropdown menu)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)  # Confidence
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Update checkbox
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)  # Filename
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # DateTimeOriginal
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # DateTime/DateCreated
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # Suggested Date
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)  # Source (dropdown menu)
         header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)  # Size
         
         # Set minimum width for source column to accommodate dropdown
-        header.resizeSection(4, 250)
+        header.resizeSection(5, 250)
         
         table_layout.addWidget(self.file_table)
         splitter.addWidget(self.table_group)
@@ -250,6 +280,11 @@ class ExifDateUpdaterGUI(QMainWindow):
         self.dry_run_btn.clicked.connect(self.dry_run_update)
         self.update_btn.clicked.connect(self.update_files)
         self.show_all_files_cb.stateChanged.connect(self.on_show_all_files_changed)
+        
+        # Selection buttons
+        self.select_all_btn.clicked.connect(self.select_all_files)
+        self.select_none_btn.clicked.connect(self.select_no_files)
+        self.select_missing_btn.clicked.connect(self.select_high_confidence)
     
     def select_folder(self):
         """Open folder selection dialog."""
@@ -314,23 +349,16 @@ class ExifDateUpdaterGUI(QMainWindow):
     
     def on_source_changed(self, row: int, combo_index: int):
         """Handle source selection change in dropdown."""
-        combo = self.file_table.cellWidget(row, 4)
-        if isinstance(combo, QComboBox) and combo_index >= 0:
+        combo = self.file_table.cellWidget(row, 5)  # Source column is now index 5
+        if isinstance(combo, (QComboBox, NoScrollComboBox)) and combo_index >= 0:
             # Get the selected source data
-            date, confidence, source_name = combo.itemData(combo_index)
+            date, source_name = combo.itemData(combo_index)
             
             # Update the suggested date column
             date_str = date.strftime("%Y-%m-%d %H:%M:%S")
-            date_item = self.file_table.item(row, 3)
+            date_item = self.file_table.item(row, 4)  # Suggested date column is now index 4
             if date_item:
                 date_item.setText(date_str)
-            
-            # Update the confidence column
-            confidence_str = f"{confidence:.1%}"
-            confidence_item = self.file_table.item(row, 5)
-            if confidence_item:
-                confidence_item.setText(confidence_str)
-                confidence_item.setData(Qt.ItemDataRole.UserRole, confidence)
             
             # Update the MediaFile object if needed
             if hasattr(self, 'media_files') and row < len(self.media_files):
@@ -343,23 +371,30 @@ class ExifDateUpdaterGUI(QMainWindow):
                 if row < len(files_to_show):
                     file = files_to_show[row]
                     file.suggested_date = date
-                    file.confidence = confidence
                     file.source = source_name
+    
+    def on_checkbox_changed(self):
+        """Handle checkbox state change to update status bar."""
+        self.update_status_bar()
     
     def update_status_bar(self):
         """Update the status bar with current view information."""
         if not self.media_files:
-            self.status_bar.showMessage("Ready")
+            self.status_bar.showMessage("Ready - Drop a folder here or use the Select Folder button")
             return
             
         missing_files = [f for f in self.media_files if f.missing_dates]
         total_files = len(self.media_files)
         missing_count = len(missing_files)
         
+        # Count selected files
+        selected_files = self.get_selected_files()
+        selected_count = len(selected_files)
+        
         if self.show_all_files_cb.isChecked():
-            self.status_bar.showMessage(f"Showing all {total_files} files, {missing_count} need updates")
+            self.status_bar.showMessage(f"Showing all {total_files} files, {missing_count} need updates, {selected_count} selected")
         else:
-            self.status_bar.showMessage(f"Showing {missing_count} files with missing dates (total analyzed: {total_files})")
+            self.status_bar.showMessage(f"Showing {missing_count} files with missing dates (total analyzed: {total_files}), {selected_count} selected")
     
     def populate_file_table(self):
         """Populate the file table with analysis results."""
@@ -377,10 +412,35 @@ class ExifDateUpdaterGUI(QMainWindow):
         self.file_table.setRowCount(len(files_to_show))
         
         for row, file in enumerate(files_to_show):
+            # Update checkbox - only enable for files with missing dates and suggestions
+            update_checkbox = QCheckBox()
+            if file.missing_dates and file.suggested_date:
+                update_checkbox.setChecked(True)  # Default to checked for files that can be updated
+                update_checkbox.setToolTip("Check to include this file in the update")
+            else:
+                update_checkbox.setChecked(False)
+                update_checkbox.setEnabled(False)
+                if not file.missing_dates:
+                    update_checkbox.setToolTip("File has complete EXIF data")
+                else:
+                    update_checkbox.setToolTip("No date suggestion available")
+            
+            # Center the checkbox in the cell
+            checkbox_widget = QWidget()
+            checkbox_layout = QHBoxLayout(checkbox_widget)
+            checkbox_layout.addWidget(update_checkbox)
+            checkbox_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            checkbox_layout.setContentsMargins(0, 0, 0, 0)
+            self.file_table.setCellWidget(row, 0, checkbox_widget)
+            
+            # Store reference to checkbox for easy access
+            update_checkbox.setProperty("file_row", row)
+            update_checkbox.stateChanged.connect(self.on_checkbox_changed)
+            
             # Filename
             filename_item = QTableWidgetItem(file.name)
             filename_item.setToolTip(str(file.path))
-            self.file_table.setItem(row, 0, filename_item)
+            self.file_table.setItem(row, 1, filename_item)
             
             # DateTimeOriginal column
             datetime_original_item = QTableWidgetItem()
@@ -391,7 +451,7 @@ class ExifDateUpdaterGUI(QMainWindow):
                 if 'DateTimeOriginal' in file.missing_dates:
                     # Highlight missing values with light red background
                     datetime_original_item.setBackground(QColor(255, 220, 220))  # Light red
-            self.file_table.setItem(row, 1, datetime_original_item)
+            self.file_table.setItem(row, 2, datetime_original_item)
             
             # DateTime/DateCreated column
             datetime_created_item = QTableWidgetItem()
@@ -402,24 +462,24 @@ class ExifDateUpdaterGUI(QMainWindow):
                 if 'DateTime' in file.missing_dates:
                     # Highlight missing values with light red background
                     datetime_created_item.setBackground(QColor(255, 220, 220))  # Light red
-            self.file_table.setItem(row, 2, datetime_created_item)
+            self.file_table.setItem(row, 3, datetime_created_item)
             
             # Suggested date
             if file.suggested_date:
                 date_str = file.suggested_date.strftime("%Y-%m-%d %H:%M:%S")
-                self.file_table.setItem(row, 3, QTableWidgetItem(date_str))
+                self.file_table.setItem(row, 4, QTableWidgetItem(date_str))
                 
                 # Source dropdown
-                source_combo = QComboBox()
+                source_combo = NoScrollComboBox()
                 source_combo.setToolTip("Select the date source to use for this file")
                 
                 # Add all available sources to the dropdown
                 if hasattr(file, 'available_sources') and file.available_sources:
                     current_source_index = 0
-                    for idx, (date, confidence, source_name) in enumerate(file.available_sources):
+                    for idx, (date, source_name) in enumerate(file.available_sources):
                         date_str_combo = date.strftime("%Y-%m-%d %H:%M:%S")
-                        display_text = f"{source_name} ({date_str_combo}) - {confidence:.1%}"
-                        source_combo.addItem(display_text, (date, confidence, source_name))
+                        display_text = f"{source_name} ({date_str_combo})"
+                        source_combo.addItem(display_text, (date, source_name))
                         
                         # Set current selection to the originally suggested source
                         if source_name == file.source:
@@ -434,25 +494,17 @@ class ExifDateUpdaterGUI(QMainWindow):
                 else:
                     # Fallback if no available_sources
                     source = getattr(file, 'source', 'Unknown')
-                    source_combo.addItem(source, (file.suggested_date, file.confidence, source))
+                    source_combo.addItem(source, (file.suggested_date, source))
                 
-                self.file_table.setCellWidget(row, 4, source_combo)
-                
-                # Confidence (update this when source changes)
-                confidence_str = f"{file.confidence:.1%}"
-                confidence_item = QTableWidgetItem(confidence_str)
-                confidence_item.setData(Qt.ItemDataRole.UserRole, file.confidence)  # Store original value
-                self.file_table.setItem(row, 5, confidence_item)
+                self.file_table.setCellWidget(row, 5, source_combo)
             else:
-                self.file_table.setItem(row, 3, QTableWidgetItem("No suggestion" if file.missing_dates else "Not needed"))
+                self.file_table.setItem(row, 4, QTableWidgetItem("No suggestion" if file.missing_dates else "Not needed"))
                 
                 # Empty source dropdown for files without suggestions
-                source_combo = QComboBox()
+                source_combo = NoScrollComboBox()
                 source_combo.setEnabled(False)
                 source_combo.addItem("-")
-                self.file_table.setCellWidget(row, 4, source_combo)
-                
-                self.file_table.setItem(row, 5, QTableWidgetItem("-"))
+                self.file_table.setCellWidget(row, 5, source_combo)
             
             # File size
             size_str = f"{file.size:,} bytes"
@@ -477,18 +529,85 @@ class ExifDateUpdaterGUI(QMainWindow):
         if reply == QMessageBox.StandardButton.Yes:
             self.start_update(dry_run=False)
     
+    def select_all_files(self):
+        """Select all files that can be updated."""
+        for row in range(self.file_table.rowCount()):
+            checkbox_widget = self.file_table.cellWidget(row, 0)
+            if checkbox_widget:
+                checkbox = checkbox_widget.findChild(QCheckBox)
+                if checkbox and checkbox.isEnabled():
+                    checkbox.setChecked(True)
+        self.update_status_bar()
+    
+    def select_no_files(self):
+        """Deselect all files."""
+        for row in range(self.file_table.rowCount()):
+            checkbox_widget = self.file_table.cellWidget(row, 0)
+            if checkbox_widget:
+                checkbox = checkbox_widget.findChild(QCheckBox)
+                if checkbox:
+                    checkbox.setChecked(False)
+        self.update_status_bar()
+    
+    def select_high_confidence(self):
+        """Select all files with reliable date sources."""
+        # Get the current files being displayed
+        if self.show_all_files_cb.isChecked():
+            files_to_show = self.media_files
+        else:
+            files_to_show = [f for f in self.media_files if f.missing_dates]
+        
+        reliable_sources = {'EXIF DateTimeOriginal', 'EXIF DateTime', 'EXIF DateTimeDigitized', 'Video Creation Date', 'Filename Date'}
+        
+        for row in range(self.file_table.rowCount()):
+            checkbox_widget = self.file_table.cellWidget(row, 0)
+            if checkbox_widget:
+                checkbox = checkbox_widget.findChild(QCheckBox)
+                if checkbox and checkbox.isEnabled() and row < len(files_to_show):
+                    file = files_to_show[row]
+                    # Only select files with reliable sources
+                    if file.source and file.source in reliable_sources:
+                        checkbox.setChecked(True)
+                    else:
+                        checkbox.setChecked(False)
+        self.update_status_bar()
+    
+    def get_selected_files(self):
+        """Get list of files selected for update."""
+        selected_files = []
+        
+        # Get the current files being displayed
+        if self.show_all_files_cb.isChecked():
+            files_to_show = self.media_files
+        else:
+            files_to_show = [f for f in self.media_files if f.missing_dates]
+        
+        for row in range(self.file_table.rowCount()):
+            if row < len(files_to_show):
+                checkbox_widget = self.file_table.cellWidget(row, 0)
+                if checkbox_widget:
+                    checkbox = checkbox_widget.findChild(QCheckBox)
+                    if checkbox and checkbox.isChecked():
+                        selected_files.append(files_to_show[row])
+        
+        return selected_files
+    
     def start_update(self, dry_run: bool = False):
         """Start update process in worker thread."""
         # Sync all dropdown selections to MediaFile objects
         self.sync_dropdown_selections()
         
-        files_to_update = [f for f in self.media_files if f.missing_dates and f.suggested_date]
+        # Get only the selected files
+        files_to_update = self.get_selected_files()
+        
+        # Filter to only files that have suggestions
+        files_to_update = [f for f in files_to_update if f.suggested_date]
         
         if not files_to_update:
-            QMessageBox.information(self, "No Updates", "No files need updates or have date suggestions.")
+            QMessageBox.information(self, "No Updates", "No files are selected for update or have date suggestions.")
             return
         
-        self.log(f"Starting {'dry run' if dry_run else 'update'} for {len(files_to_update)} files...")
+        self.log(f"Starting {'dry run' if dry_run else 'update'} for {len(files_to_update)} selected files...")
         self.set_ui_enabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)
@@ -516,15 +635,14 @@ class ExifDateUpdaterGUI(QMainWindow):
         
         # Update each file based on its dropdown selection
         for row in range(self.file_table.rowCount()):
-            combo = self.file_table.cellWidget(row, 4)
-            if isinstance(combo, QComboBox) and combo.currentIndex() >= 0 and row < len(files_to_show):
+            combo = self.file_table.cellWidget(row, 5)  # Source column is now index 5
+            if isinstance(combo, (QComboBox, NoScrollComboBox)) and combo.currentIndex() >= 0 and row < len(files_to_show):
                 # Get the selected source data
-                date, confidence, source_name = combo.itemData(combo.currentIndex())
+                date, source_name = combo.itemData(combo.currentIndex())
                 
                 # Update the MediaFile object
                 file = files_to_show[row]
                 file.suggested_date = date
-                file.confidence = confidence
                 file.source = source_name
     
     def on_update_finished(self, successful: int, failed: int):
@@ -560,6 +678,11 @@ class ExifDateUpdaterGUI(QMainWindow):
         self.analyze_btn.setEnabled(enabled and self.folder_path is not None)
         self.dry_run_btn.setEnabled(enabled and bool(self.media_files))
         self.update_btn.setEnabled(enabled and bool(self.media_files))
+        
+        # Enable/disable selection buttons
+        self.select_all_btn.setEnabled(enabled and bool(self.media_files))
+        self.select_none_btn.setEnabled(enabled and bool(self.media_files))
+        self.select_missing_btn.setEnabled(enabled and bool(self.media_files))
     
     def log(self, message: str):
         """Add message to log."""
@@ -571,6 +694,46 @@ class ExifDateUpdaterGUI(QMainWindow):
         cursor = self.log_text.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         self.log_text.setTextCursor(cursor)
+    
+    def dragEnterEvent(self, event):
+        """Handle drag enter event."""
+        if event.mimeData().hasUrls():
+            # Check if any of the URLs are directories
+            for url in event.mimeData().urls():
+                if url.isLocalFile():
+                    file_path = Path(url.toLocalFile())
+                    if file_path.is_dir():
+                        event.acceptProposedAction()
+                        # Provide visual feedback
+                        self.setStyleSheet("QMainWindow { border: 3px dashed #4CAF50; }")
+                        return
+        event.ignore()
+
+    def dragLeaveEvent(self, event):
+        """Handle drag leave event."""
+        # Remove visual feedback
+        self.setStyleSheet("")
+        event.accept()
+    
+    def dropEvent(self, event):
+        """Handle drop event."""
+        # Remove visual feedback
+        self.setStyleSheet("")
+        
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.isLocalFile():
+                    file_path = Path(url.toLocalFile())
+                    if file_path.is_dir():
+                        # Set the dropped folder as the selected folder
+                        self.folder_path = file_path
+                        self.folder_label.setText(str(self.folder_path))
+                        self.folder_label.setStyleSheet("")  # Clear custom styling to use theme default
+                        self.analyze_btn.setEnabled(True)
+                        self.log(f"Folder dropped: {self.folder_path}")
+                        event.acceptProposedAction()
+                        return
+        event.ignore()
 
 
 def run_gui():
