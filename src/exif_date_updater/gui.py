@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from PySide6.QtCore import QThread, Signal, Qt
-from PySide6.QtGui import QFont, QTextCursor, QColor
+from PySide6.QtGui import QFont, QTextCursor, QColor, QKeySequence, QShortcut, QPalette
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFileDialog, QTableWidget, QTableWidgetItem,
@@ -17,6 +17,19 @@ from PySide6.QtWidgets import (
 
 from .exif_analyzer import ExifAnalyzer, MediaFile
 from .exif_updater import ExifUpdater
+
+class NumericTableWidgetItem(QTableWidgetItem):
+    """QTableWidgetItem that sorts numerically while displaying formatted text."""
+    
+    def __init__(self, text: str, numeric_value: float):
+        super().__init__(text)
+        self.numeric_value = numeric_value
+    
+    def __lt__(self, other):
+        """Compare numerically for sorting."""
+        if isinstance(other, NumericTableWidgetItem):
+            return self.numeric_value < other.numeric_value
+        return super().__lt__(other)
 
 
 class NoScrollComboBox(QComboBox):
@@ -143,7 +156,7 @@ class ExifDateUpdaterGUI(QMainWindow):
         layout.addWidget(folder_group)
         
         # Progress bar
-        self.progress_bar = QProgressBar()
+        self.progress_bar = QProgressBar(alignment=Qt.AlignmentFlag.AlignCenter)
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
         
@@ -157,7 +170,7 @@ class ExifDateUpdaterGUI(QMainWindow):
         # Add option to show all files
         table_options_layout = QHBoxLayout()
         self.show_all_files_cb = QCheckBox("Show all files (including those with complete EXIF data)")
-        self.show_all_files_cb.setChecked(False)
+        self.show_all_files_cb.setChecked(True)
         table_options_layout.addWidget(self.show_all_files_cb)
         
         # Add select all/none buttons
@@ -165,7 +178,7 @@ class ExifDateUpdaterGUI(QMainWindow):
         self.select_none_btn = QPushButton("Select None")
         self.select_missing_btn = QPushButton("Select Reliable Sources")
         
-        self.select_all_btn.setToolTip("Select all files that can be updated")
+        self.select_all_btn.setToolTip("Select all files that have date suggestions available")
         self.select_none_btn.setToolTip("Deselect all files")
         self.select_missing_btn.setToolTip("Select only files with reliable date sources (EXIF, video metadata, filename dates)")
         
@@ -182,6 +195,16 @@ class ExifDateUpdaterGUI(QMainWindow):
         self.file_table.setHorizontalHeaderLabels([
             "Update", "Filename", "DateTimeOriginal", "DateTime/DateCreated", "Suggested Date", "Source", "Size"
         ])
+        
+        # Enable multiselect functionality
+        self.file_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.file_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        
+        # Enable column sorting
+        self.file_table.setSortingEnabled(True)
+        
+        # Connect selection change to update row appearance
+        self.file_table.selectionModel().selectionChanged.connect(self.on_table_selection_changed)
         
         # Add tooltips to column headers
         header = self.file_table.horizontalHeader()
@@ -234,7 +257,7 @@ class ExifDateUpdaterGUI(QMainWindow):
         self.update_date_created_cb = QCheckBox("Update DateTime/DateCreated")
         self.update_date_created_cb.setChecked(True)
         self.create_backup_cb = QCheckBox("Create backup files")
-        self.create_backup_cb.setChecked(True)
+        self.create_backup_cb.setChecked(False)
         
         options_layout.addWidget(self.update_datetime_original_cb)
         options_layout.addWidget(self.update_date_created_cb)
@@ -285,6 +308,18 @@ class ExifDateUpdaterGUI(QMainWindow):
         self.select_all_btn.clicked.connect(self.select_all_files)
         self.select_none_btn.clicked.connect(self.select_no_files)
         self.select_missing_btn.clicked.connect(self.select_high_confidence)
+        
+        # Keyboard shortcuts for table operations
+        select_all_shortcut = QShortcut(QKeySequence.StandardKey.SelectAll, self.file_table)
+        select_all_shortcut.activated.connect(self.select_all_files)
+        
+        # Also add Ctrl+D for deselect all
+        deselect_shortcut = QShortcut(QKeySequence("Ctrl+D"), self.file_table)
+        deselect_shortcut.activated.connect(self.select_no_files)
+        
+        # Add spacebar to toggle checkboxes for selected rows
+        toggle_shortcut = QShortcut(QKeySequence("Space"), self.file_table)
+        toggle_shortcut.activated.connect(self.toggle_selected_rows)
     
     def select_folder(self):
         """Open folder selection dialog."""
@@ -376,7 +411,92 @@ class ExifDateUpdaterGUI(QMainWindow):
     def on_checkbox_changed(self):
         """Handle checkbox state change to update status bar."""
         self.update_status_bar()
+        # Force immediate GUI update
+        sender = self.sender()
+        if sender:
+            row = sender.property("file_row")
+            if row is not None:
+                self.update_row_appearance(row)
+                self.file_table.viewport().repaint()
     
+    def on_table_selection_changed(self):
+        """Handle table row selection changes."""
+        # Update appearance of all rows based on selection
+        for row in range(self.file_table.rowCount()):
+            self.update_row_appearance(row)
+        # Force immediate GUI update
+        self.file_table.viewport().repaint()
+    
+    def update_row_appearance(self, row: int):
+        """Update the appearance of a table row based on its checkbox state."""
+        # Get checkbox state
+        checkbox_widget = self.file_table.cellWidget(row, 0)
+        is_checked = False
+        if checkbox_widget:
+            checkbox = checkbox_widget.findChild(QCheckBox)
+            if checkbox:
+                is_checked = checkbox.isChecked() and checkbox.isEnabled()
+        
+        # Set font colors based on checkbox state, preserve background colors for multirow selection
+        palette = self.palette()
+        
+        for col in range(self.file_table.columnCount()):
+            item = self.file_table.item(row, col)
+            if item:
+                # Check if this item should have red text (missing EXIF data)
+                has_red_text = False
+                if col == 2 or col == 3:  # DateTimeOriginal or DateTime/DateCreated columns
+                    files_to_show = self.media_files if self.show_all_files_cb.isChecked() else [f for f in self.media_files if f.missing_dates]
+                    if row < len(files_to_show):
+                        file = files_to_show[row]
+                        missing_field = 'DateTimeOriginal' if col == 2 else 'DateTime'
+                        has_red_text = missing_field in file.missing_dates and file.suggested_date
+                
+                if not is_checked:
+                    # Grey out non-selected files - but preserve red text for missing data
+                    if has_red_text:
+                        # Use a darker red for unchecked files with missing data
+                        red_color = QColor(150, 15, 15) if not self._is_dark_theme() else QColor(200, 80, 80)
+                        item.setForeground(red_color)
+                    else:
+                        disabled_color = palette.color(QPalette.ColorRole.PlaceholderText)
+                        item.setForeground(disabled_color)
+                else:
+                    # Reset to appropriate colors for checked files
+                    if has_red_text:
+                        # Use bright red for checked files with missing data
+                        red_color = QColor(220, 20, 20) if not self._is_dark_theme() else QColor(255, 100, 100)
+                        item.setForeground(red_color)
+                    else:
+                        default_text = palette.color(QPalette.ColorRole.Text)
+                        item.setForeground(default_text)
+                    
+                    # Reset background to default theme color
+                    default_bg = palette.color(QPalette.ColorRole.Base)
+                    item.setBackground(default_bg)
+    
+    def _is_dark_theme(self) -> bool:
+        """Check if the current theme is dark."""
+        palette = self.palette()
+        window_color = palette.color(QPalette.ColorRole.Window)
+        # If the window background is darker than middle grey, assume dark theme
+        return window_color.lightness() < 128
+    
+    def _update_row_and_repaint(self, row: int):
+        """Update row appearance and force repaint for immediate visual feedback."""
+        # Update checkbox sort data when checkbox state changes
+        checkbox_widget = self.file_table.cellWidget(row, 0)
+        if checkbox_widget:
+            checkbox = checkbox_widget.findChild(QCheckBox)
+            if checkbox:
+                checkbox_item = self.file_table.item(row, 0)
+                if checkbox_item:
+                    sort_value = 1 if (checkbox.isChecked() and checkbox.isEnabled()) else 0
+                    checkbox_item.setData(Qt.ItemDataRole.UserRole, sort_value)
+                    checkbox_item.setText(str(sort_value))
+        
+        self.update_row_appearance(row)
+        self.file_table.viewport().repaint()
     def update_status_bar(self):
         """Update the status bar with current view information."""
         if not self.media_files:
@@ -392,7 +512,8 @@ class ExifDateUpdaterGUI(QMainWindow):
         selected_count = len(selected_files)
         
         if self.show_all_files_cb.isChecked():
-            self.status_bar.showMessage(f"Showing all {total_files} files, {missing_count} need updates, {selected_count} selected")
+            updatable_count = len([f for f in self.media_files if f.suggested_date or (hasattr(f, 'available_sources') and f.available_sources)])
+            self.status_bar.showMessage(f"Showing all {total_files} files, {missing_count} need updates, {updatable_count} can be updated, {selected_count} selected")
         else:
             self.status_bar.showMessage(f"Showing {missing_count} files with missing dates (total analyzed: {total_files}), {selected_count} selected")
     
@@ -411,19 +532,32 @@ class ExifDateUpdaterGUI(QMainWindow):
         
         self.file_table.setRowCount(len(files_to_show))
         
+        # Temporarily disable sorting while populating the table
+        self.file_table.setSortingEnabled(False)
+        
         for row, file in enumerate(files_to_show):
-            # Update checkbox - only enable for files with missing dates and suggestions
+            # Update checkbox - enable for files with suggestions OR available sources when showing all files
             update_checkbox = QCheckBox()
-            if file.missing_dates and file.suggested_date:
-                update_checkbox.setChecked(True)  # Default to checked for files that can be updated
-                update_checkbox.setToolTip("Check to include this file in the update")
+            has_options = file.suggested_date or (hasattr(file, 'available_sources') and file.available_sources)
+            
+            if has_options:
+                if self.show_all_files_cb.isChecked():
+                    # When showing all files, allow editing any file with available sources
+                    update_checkbox.setChecked(True if file.missing_dates else False)  # Default checked only for missing dates
+                    update_checkbox.setToolTip("Check to include this file in the update")
+                else:
+                    # When showing only missing files, only enable if there are missing dates
+                    if file.missing_dates:
+                        update_checkbox.setChecked(True)
+                        update_checkbox.setToolTip("Check to include this file in the update")
+                    else:
+                        update_checkbox.setChecked(False)
+                        update_checkbox.setEnabled(False)
+                        update_checkbox.setToolTip("File has complete EXIF data")
             else:
                 update_checkbox.setChecked(False)
                 update_checkbox.setEnabled(False)
-                if not file.missing_dates:
-                    update_checkbox.setToolTip("File has complete EXIF data")
-                else:
-                    update_checkbox.setToolTip("No date suggestion available")
+                update_checkbox.setToolTip("No date options available")
             
             # Center the checkbox in the cell
             checkbox_widget = QWidget()
@@ -433,9 +567,18 @@ class ExifDateUpdaterGUI(QMainWindow):
             checkbox_layout.setContentsMargins(0, 0, 0, 0)
             self.file_table.setCellWidget(row, 0, checkbox_widget)
             
+            # Add hidden item with sort data for the checkbox column
+            checkbox_item = QTableWidgetItem()
+            # Use numeric values for reliable sorting: 1 for checked+enabled, 0 for others
+            sort_value = 1 if (update_checkbox.isChecked() and update_checkbox.isEnabled()) else 0
+            checkbox_item.setData(Qt.ItemDataRole.UserRole, sort_value)
+            checkbox_item.setText(str(sort_value))  # Set text to numeric value for sorting
+            self.file_table.setItem(row, 0, checkbox_item)
+            
             # Store reference to checkbox for easy access
             update_checkbox.setProperty("file_row", row)
             update_checkbox.stateChanged.connect(self.on_checkbox_changed)
+            update_checkbox.stateChanged.connect(lambda checked, r=row: self._update_row_and_repaint(r))
             
             # Filename
             filename_item = QTableWidgetItem(file.name)
@@ -446,28 +589,55 @@ class ExifDateUpdaterGUI(QMainWindow):
             datetime_original_item = QTableWidgetItem()
             if file.datetime_original:
                 datetime_original_item.setText(file.datetime_original.strftime("%Y-%m-%d %H:%M:%S"))
+                datetime_original_item.setData(Qt.ItemDataRole.UserRole, file.datetime_original.timestamp())
             else:
-                datetime_original_item.setText("")
-                if 'DateTimeOriginal' in file.missing_dates:
-                    # Highlight missing values with light red background
-                    datetime_original_item.setBackground(QColor(255, 220, 220))  # Light red
+                if 'DateTimeOriginal' in file.missing_dates and file.suggested_date:
+                    # Show the date that will be written in red
+                    datetime_original_item.setText(file.suggested_date.strftime("%Y-%m-%d %H:%M:%S"))
+                    datetime_original_item.setData(Qt.ItemDataRole.UserRole, file.suggested_date.timestamp())
+                    red_color = QColor(220, 20, 20) if not self._is_dark_theme() else QColor(255, 100, 100)
+                    datetime_original_item.setForeground(red_color)
+                else:
+                    datetime_original_item.setText("")
+                    datetime_original_item.setData(Qt.ItemDataRole.UserRole, 0)  # Sort empty dates to the bottom
             self.file_table.setItem(row, 2, datetime_original_item)
             
             # DateTime/DateCreated column
             datetime_created_item = QTableWidgetItem()
             if file.date_created:
                 datetime_created_item.setText(file.date_created.strftime("%Y-%m-%d %H:%M:%S"))
+                datetime_created_item.setData(Qt.ItemDataRole.UserRole, file.date_created.timestamp())
             else:
-                datetime_created_item.setText("")
-                if 'DateTime' in file.missing_dates:
-                    # Highlight missing values with light red background
-                    datetime_created_item.setBackground(QColor(255, 220, 220))  # Light red
+                if 'DateTime' in file.missing_dates and file.suggested_date:
+                    # Show the date that will be written in red
+                    datetime_created_item.setText(file.suggested_date.strftime("%Y-%m-%d %H:%M:%S"))
+                    datetime_created_item.setData(Qt.ItemDataRole.UserRole, file.suggested_date.timestamp())
+                    red_color = QColor(220, 20, 20) if not self._is_dark_theme() else QColor(255, 100, 100)
+                    datetime_created_item.setForeground(red_color)
+                else:
+                    datetime_created_item.setText("")
+                    datetime_created_item.setData(Qt.ItemDataRole.UserRole, 0)  # Sort empty dates to the bottom
             self.file_table.setItem(row, 3, datetime_created_item)
             
-            # Suggested date
-            if file.suggested_date:
-                date_str = file.suggested_date.strftime("%Y-%m-%d %H:%M:%S")
-                self.file_table.setItem(row, 4, QTableWidgetItem(date_str))
+            # Suggested date and source dropdown
+            if file.suggested_date or (hasattr(file, 'available_sources') and file.available_sources):
+                # For files with suggestions, use the suggested date
+                if file.suggested_date:
+                    date_str = file.suggested_date.strftime("%Y-%m-%d %H:%M:%S")
+                    suggested_item = QTableWidgetItem(date_str)
+                    suggested_item.setData(Qt.ItemDataRole.UserRole, file.suggested_date.timestamp())
+                    self.file_table.setItem(row, 4, suggested_item)
+                else:
+                    # For files without suggestions but with available sources, use the first available source as default
+                    if hasattr(file, 'available_sources') and file.available_sources:
+                        default_date, default_source = file.available_sources[0]
+                        date_str = default_date.strftime("%Y-%m-%d %H:%M:%S")
+                        suggested_item = QTableWidgetItem(date_str)
+                        suggested_item.setData(Qt.ItemDataRole.UserRole, default_date.timestamp())
+                        self.file_table.setItem(row, 4, suggested_item)
+                        # Set the file's suggested date to the default for processing
+                        file.suggested_date = default_date
+                        file.source = default_source
                 
                 # Source dropdown
                 source_combo = NoScrollComboBox()
@@ -481,8 +651,8 @@ class ExifDateUpdaterGUI(QMainWindow):
                         display_text = f"{source_name} ({date_str_combo})"
                         source_combo.addItem(display_text, (date, source_name))
                         
-                        # Set current selection to the originally suggested source
-                        if source_name == file.source:
+                        # Set current selection to the originally suggested source (or first if no suggestion)
+                        if hasattr(file, 'source') and source_name == file.source:
                             current_source_index = idx
                     
                     source_combo.setCurrentIndex(current_source_index)
@@ -492,23 +662,48 @@ class ExifDateUpdaterGUI(QMainWindow):
                         lambda index, r=row: self.on_source_changed(r, index)
                     )
                 else:
-                    # Fallback if no available_sources
+                    # Fallback if no available_sources but has suggested_date
                     source = getattr(file, 'source', 'Unknown')
                     source_combo.addItem(source, (file.suggested_date, source))
                 
                 self.file_table.setCellWidget(row, 5, source_combo)
-            else:
-                self.file_table.setItem(row, 4, QTableWidgetItem("No suggestion" if file.missing_dates else "Not needed"))
                 
-                # Empty source dropdown for files without suggestions
+                # Add hidden item for sorting by source name
+                current_source = getattr(file, 'source', 'Unknown')
+                source_sort_item = QTableWidgetItem(current_source)
+                source_sort_item.setData(Qt.ItemDataRole.UserRole, current_source)
+                self.file_table.setItem(row, 5, source_sort_item)
+            else:
+                no_options_item = QTableWidgetItem("No options available")
+                no_options_item.setData(Qt.ItemDataRole.UserRole, 0)  # Sort to bottom
+                self.file_table.setItem(row, 4, no_options_item)
+                
+                # Empty source dropdown for files without any date options
                 source_combo = NoScrollComboBox()
                 source_combo.setEnabled(False)
                 source_combo.addItem("-")
                 self.file_table.setCellWidget(row, 5, source_combo)
+                
+                # Add hidden item for sorting (empty sources sort to bottom)
+                empty_source_item = QTableWidgetItem("-")
+                empty_source_item.setData(Qt.ItemDataRole.UserRole, "")
+                self.file_table.setItem(row, 5, empty_source_item)
             
             # File size
             size_str = f"{file.size:,} bytes"
-            self.file_table.setItem(row, 6, QTableWidgetItem(size_str))
+            size_item = NumericTableWidgetItem(size_str, file.size)
+            size_item.setData(Qt.ItemDataRole.UserRole, file.size)
+
+            self.file_table.setItem(row, 6, size_item)
+        
+        # Update appearance of all rows after population
+        for row in range(self.file_table.rowCount()):
+            self.update_row_appearance(row)
+        # Force immediate GUI rendering
+        self.file_table.viewport().repaint()
+        
+        # Re-enable sorting after table population is complete
+        self.file_table.setSortingEnabled(True)
     
     def dry_run_update(self):
         """Start dry run update."""
@@ -538,6 +733,10 @@ class ExifDateUpdaterGUI(QMainWindow):
                 if checkbox and checkbox.isEnabled():
                     checkbox.setChecked(True)
         self.update_status_bar()
+        # Force immediate GUI update for all rows
+        for row in range(self.file_table.rowCount()):
+            self.update_row_appearance(row)
+        self.file_table.viewport().repaint()
     
     def select_no_files(self):
         """Deselect all files."""
@@ -548,6 +747,10 @@ class ExifDateUpdaterGUI(QMainWindow):
                 if checkbox:
                     checkbox.setChecked(False)
         self.update_status_bar()
+        # Force immediate GUI update for all rows
+        for row in range(self.file_table.rowCount()):
+            self.update_row_appearance(row)
+        self.file_table.viewport().repaint()
     
     def select_high_confidence(self):
         """Select all files with reliable date sources."""
@@ -571,6 +774,28 @@ class ExifDateUpdaterGUI(QMainWindow):
                     else:
                         checkbox.setChecked(False)
         self.update_status_bar()
+        # Force immediate GUI update for all rows
+        for row in range(self.file_table.rowCount()):
+            self.update_row_appearance(row)
+        self.file_table.viewport().repaint()
+    
+    def toggle_selected_rows(self):
+        """Toggle checkboxes for currently selected table rows."""
+        selected_indexes = self.file_table.selectionModel().selectedRows()
+        
+        for index in selected_indexes:
+            row = index.row()
+            checkbox_widget = self.file_table.cellWidget(row, 0)
+            if checkbox_widget:
+                checkbox = checkbox_widget.findChild(QCheckBox)
+                if checkbox and checkbox.isEnabled():
+                    checkbox.setChecked(not checkbox.isChecked())
+        
+        self.update_status_bar()
+        # Force immediate GUI update for affected rows
+        for index in selected_indexes:
+            self.update_row_appearance(index.row())
+        self.file_table.viewport().repaint()
     
     def get_selected_files(self):
         """Get list of files selected for update."""
@@ -600,7 +825,7 @@ class ExifDateUpdaterGUI(QMainWindow):
         # Get only the selected files
         files_to_update = self.get_selected_files()
         
-        # Filter to only files that have suggestions
+        # Filter to only files that have date suggestions (after dropdown sync)
         files_to_update = [f for f in files_to_update if f.suggested_date]
         
         if not files_to_update:
