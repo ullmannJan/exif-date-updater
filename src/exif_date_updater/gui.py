@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from PySide6.QtCore import QThread, Signal, Qt
-from PySide6.QtGui import QFont, QTextCursor, QColor, QKeySequence, QShortcut, QPalette
+from PySide6.QtGui import QFont, QTextCursor, QColor, QKeySequence, QShortcut, QPalette, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFileDialog, QTableWidget, QTableWidgetItem,
@@ -108,6 +108,9 @@ class ExifDateUpdaterGUI(QMainWindow):
         self.setWindowTitle("EXIF Date Updater")
         self.setGeometry(100, 100, 1200, 800)
         
+        # Set window icon
+        self.setup_window_icon()
+        
         # Enable drag and drop
         self.setAcceptDrops(True)
         
@@ -128,6 +131,34 @@ class ExifDateUpdaterGUI(QMainWindow):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready - Drop a folder here or use the Select Folder button")
+    
+    def setup_window_icon(self):
+        """Setup the window icon using the logo files."""
+        try:
+            # Get the path to the icons directory
+            icons_dir = Path(__file__).parent / "resources" / "icons"
+            
+            # Create QIcon with multiple resolutions for crisp display at different sizes
+            icon = QIcon()
+            
+            # Add the 128x128 version
+            icon_128_path = icons_dir / "logo_128.png"
+            if icon_128_path.exists():
+                icon.addFile(str(icon_128_path))
+            
+            # Add the 256x256 version for higher DPI displays
+            icon_256_path = icons_dir / "logo_256.png"
+            if icon_256_path.exists():
+                icon.addFile(str(icon_256_path))
+            
+            # Set the window icon
+            if not icon.isNull():
+                self.setWindowIcon(icon)
+            else:
+                print("Warning: Could not load application icon")
+                
+        except Exception as e:
+            print(f"Error loading window icon: {e}")
     
     def setup_ui(self):
         """Setup the user interface."""
@@ -304,6 +335,10 @@ class ExifDateUpdaterGUI(QMainWindow):
         self.update_btn.clicked.connect(self.update_files)
         self.show_all_files_cb.stateChanged.connect(self.on_show_all_files_changed)
         
+        # Connect update checkboxes to refresh table appearance when red text logic changes
+        self.update_datetime_original_cb.toggled.connect(self.refresh_table_appearance)
+        self.update_date_created_cb.toggled.connect(self.refresh_table_appearance)
+        
         # Selection buttons
         self.select_all_btn.clicked.connect(self.select_all_files)
         self.select_none_btn.clicked.connect(self.select_no_files)
@@ -443,33 +478,11 @@ class ExifDateUpdaterGUI(QMainWindow):
         for col in range(self.file_table.columnCount()):
             item = self.file_table.item(row, col)
             if item:
-                # Check if this item should have red text (missing EXIF data)
-                has_red_text = False
-                if col == 2 or col == 3:  # DateTimeOriginal or DateTime/DateCreated columns
-                    files_to_show = self.media_files if self.show_all_files_cb.isChecked() else [f for f in self.media_files if f.missing_dates]
-                    if row < len(files_to_show):
-                        file = files_to_show[row]
-                        missing_field = 'DateTimeOriginal' if col == 2 else 'DateTime'
-                        has_red_text = missing_field in file.missing_dates and file.suggested_date
-                
                 if not is_checked:
-                    # Grey out non-selected files - but preserve red text for missing data
-                    if has_red_text:
-                        # Use a darker red for unchecked files with missing data
-                        red_color = QColor(150, 15, 15) if not self._is_dark_theme() else QColor(200, 80, 80)
-                        item.setForeground(red_color)
-                    else:
-                        disabled_color = palette.color(QPalette.ColorRole.PlaceholderText)
-                        item.setForeground(disabled_color)
-                else:
-                    # Reset to appropriate colors for checked files
-                    if has_red_text:
-                        # Use bright red for checked files with missing data
-                        red_color = QColor(220, 20, 20) if not self._is_dark_theme() else QColor(255, 100, 100)
-                        item.setForeground(red_color)
-                    else:
-                        default_text = palette.color(QPalette.ColorRole.Text)
-                        item.setForeground(default_text)
+                    # Grey out non-selected files
+                    disabled_color = palette.color(QPalette.ColorRole.PlaceholderText)
+                    item.setForeground(disabled_color)
+                # Note: For checked files, colors are set during table population in populate_file_table
                     
                     # Reset background to default theme color
                     default_bg = palette.color(QPalette.ColorRole.Base)
@@ -497,6 +510,13 @@ class ExifDateUpdaterGUI(QMainWindow):
         
         self.update_row_appearance(row)
         self.file_table.viewport().repaint()
+    
+    def refresh_table_appearance(self):
+        """Refresh the appearance of all table rows (used when checkbox states change)."""
+        # When checkboxes change, we need to repopulate the table because the text content changes
+        # (not just the colors), so we can't just update appearance
+        self.populate_file_table()
+    
     def update_status_bar(self):
         """Update the status bar with current view information."""
         if not self.media_files:
@@ -588,11 +608,20 @@ class ExifDateUpdaterGUI(QMainWindow):
             # DateTimeOriginal column
             datetime_original_item = QTableWidgetItem()
             if file.datetime_original:
-                datetime_original_item.setText(file.datetime_original.strftime("%Y-%m-%d %H:%M:%S"))
-                datetime_original_item.setData(Qt.ItemDataRole.UserRole, file.datetime_original.timestamp())
+                # Check if this field will be overwritten based on checkbox selection
+                if self.update_datetime_original_cb.isChecked() and file.suggested_date:
+                    # Show the date that will be written in red (overwriting existing data)
+                    datetime_original_item.setText(file.suggested_date.strftime("%Y-%m-%d %H:%M:%S"))
+                    datetime_original_item.setData(Qt.ItemDataRole.UserRole, file.suggested_date.timestamp())
+                    red_color = QColor(220, 20, 20) if not self._is_dark_theme() else QColor(255, 100, 100)
+                    datetime_original_item.setForeground(red_color)
+                else:
+                    # Show existing EXIF data in normal color
+                    datetime_original_item.setText(file.datetime_original.strftime("%Y-%m-%d %H:%M:%S"))
+                    datetime_original_item.setData(Qt.ItemDataRole.UserRole, file.datetime_original.timestamp())
             else:
-                if 'DateTimeOriginal' in file.missing_dates and file.suggested_date:
-                    # Show the date that will be written in red
+                if ('DateTimeOriginal' in file.missing_dates and file.suggested_date) or (self.update_datetime_original_cb.isChecked() and file.suggested_date):
+                    # Show the date that will be written in red (missing data or will be overwritten)
                     datetime_original_item.setText(file.suggested_date.strftime("%Y-%m-%d %H:%M:%S"))
                     datetime_original_item.setData(Qt.ItemDataRole.UserRole, file.suggested_date.timestamp())
                     red_color = QColor(220, 20, 20) if not self._is_dark_theme() else QColor(255, 100, 100)
@@ -600,16 +629,26 @@ class ExifDateUpdaterGUI(QMainWindow):
                 else:
                     datetime_original_item.setText("")
                     datetime_original_item.setData(Qt.ItemDataRole.UserRole, 0)  # Sort empty dates to the bottom
+                    datetime_original_item.setData(Qt.ItemDataRole.UserRole, 0)  # Sort empty dates to the bottom
             self.file_table.setItem(row, 2, datetime_original_item)
             
             # DateTime/DateCreated column
             datetime_created_item = QTableWidgetItem()
             if file.date_created:
-                datetime_created_item.setText(file.date_created.strftime("%Y-%m-%d %H:%M:%S"))
-                datetime_created_item.setData(Qt.ItemDataRole.UserRole, file.date_created.timestamp())
+                # Check if this field will be overwritten based on checkbox selection
+                if self.update_date_created_cb.isChecked() and file.suggested_date:
+                    # Show the date that will be written in red (overwriting existing data)
+                    datetime_created_item.setText(file.suggested_date.strftime("%Y-%m-%d %H:%M:%S"))
+                    datetime_created_item.setData(Qt.ItemDataRole.UserRole, file.suggested_date.timestamp())
+                    red_color = QColor(220, 20, 20) if not self._is_dark_theme() else QColor(255, 100, 100)
+                    datetime_created_item.setForeground(red_color)
+                else:
+                    # Show existing EXIF data in normal color
+                    datetime_created_item.setText(file.date_created.strftime("%Y-%m-%d %H:%M:%S"))
+                    datetime_created_item.setData(Qt.ItemDataRole.UserRole, file.date_created.timestamp())
             else:
-                if 'DateTime' in file.missing_dates and file.suggested_date:
-                    # Show the date that will be written in red
+                if ('DateTime' in file.missing_dates and file.suggested_date) or (self.update_date_created_cb.isChecked() and file.suggested_date):
+                    # Show the date that will be written in red (missing data or will be overwritten)
                     datetime_created_item.setText(file.suggested_date.strftime("%Y-%m-%d %H:%M:%S"))
                     datetime_created_item.setData(Qt.ItemDataRole.UserRole, file.suggested_date.timestamp())
                     red_color = QColor(220, 20, 20) if not self._is_dark_theme() else QColor(255, 100, 100)
@@ -966,6 +1005,23 @@ def run_gui():
     app = QApplication(sys.argv)
     app.setApplicationName("EXIF Date Updater")
     app.setApplicationVersion("1.0")
+    
+    # Set application icon for taskbar/system tray
+    try:
+        icons_dir = Path(__file__).parent / "resources" / "icons"
+        icon = QIcon()
+        icon_128_path = icons_dir / "logo_128.png"
+        icon_256_path = icons_dir / "logo_256.png"
+        
+        if icon_128_path.exists():
+            icon.addFile(str(icon_128_path))
+        if icon_256_path.exists():
+            icon.addFile(str(icon_256_path))
+            
+        if not icon.isNull():
+            app.setWindowIcon(icon)
+    except Exception as e:
+        print(f"Error setting application icon: {e}")
     
     window = ExifDateUpdaterGUI()
     window.show()
