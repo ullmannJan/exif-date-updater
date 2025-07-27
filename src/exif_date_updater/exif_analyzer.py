@@ -10,7 +10,6 @@ from typing import List, Optional, Union
 import exifread
 from PIL import Image
 from PIL.ExifTags import TAGS
-import ffmpeg
 
 
 class MediaFile:
@@ -185,43 +184,52 @@ class ExifAnalyzer:
             print(f"Error extracting EXIF from {media_file.path}: {e}")
     
     def _extract_video_metadata(self, media_file: MediaFile):
-        """Extract metadata from video files."""
+        """Extract EXIF-like metadata from video files using the same tools as images."""
         try:
-            probe = ffmpeg.probe(str(media_file.path))
-            
-            # Check format metadata
-            if 'format' in probe and 'tags' in probe['format']:
-                tags = probe['format']['tags']
+            # Try exifread on video files - many video formats contain EXIF-like metadata
+            with open(media_file.path, 'rb') as f:
+                tags = exifread.process_file(f)
                 
-                # Common video date tags
-                date_keys = ['creation_time', 'date', 'creation_date', 'encoded_date']
-                for key in date_keys:
-                    if key in tags:
-                        date_str = tags[key]
-                        parsed_date = self._parse_video_datetime(date_str)
-                        if parsed_date:
-                            if not media_file.video_creation_date:
-                                media_file.video_creation_date = parsed_date
-                            if not media_file.datetime_original:
-                                media_file.datetime_original = parsed_date
-                            break
-            
-            # Check stream metadata
-            for stream in probe.get('streams', []):
-                if 'tags' in stream:
-                    tags = stream['tags']
-                    for key in ['creation_time', 'date']:
-                        if key in tags and not media_file.video_creation_date:
-                            date_str = tags[key]
-                            parsed_date = self._parse_video_datetime(date_str)
+                # Look for standard EXIF date tags
+                if 'EXIF DateTimeOriginal' in tags:
+                    media_file.datetime_original = self._parse_exif_datetime(str(tags['EXIF DateTimeOriginal']))
+                
+                if 'EXIF DateTime' in tags and not media_file.date_created:
+                    media_file.date_created = self._parse_exif_datetime(str(tags['EXIF DateTime']))
+                
+                if 'EXIF DateTimeDigitized' in tags:
+                    media_file.datetime_digitized = self._parse_exif_datetime(str(tags['EXIF DateTimeDigitized']))
+                
+                # Also check for video-specific date tags that might be present
+                video_date_tags = [
+                    'Image DateTime',
+                    'GPS GPSDate', 
+                    'GPS GPSTimeStamp',
+                    'EXIF CreateDate',
+                    'EXIF ModifyDate'
+                ]
+                
+                for tag_name in video_date_tags:
+                    if tag_name in tags and not media_file.video_creation_date:
+                        try:
+                            date_value = str(tags[tag_name])
+                            parsed_date = self._parse_exif_datetime(date_value)
+                            if not parsed_date:
+                                # Try video datetime format
+                                parsed_date = self._parse_video_datetime(date_value)
                             if parsed_date:
                                 media_file.video_creation_date = parsed_date
+                                # Also set as datetime_original if not already set
                                 if not media_file.datetime_original:
                                     media_file.datetime_original = parsed_date
                                 break
-                                
-        except Exception as e:
-            print(f"Error extracting video metadata from {media_file.path}: {e}")
+                        except Exception:
+                            continue
+                            
+        except Exception:
+            # Video files might not have EXIF data, which is fine
+            # We'll rely on filename parsing and file system dates as fallback
+            pass
     
     def _extract_filename_date(self, media_file: MediaFile):
         """Extract date information from filename."""
