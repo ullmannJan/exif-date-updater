@@ -2,6 +2,8 @@
 
 A Python tool to analyze and update missing EXIF date information in image and video files.
 
+<img width="1804" height="1247" alt="image" src="https://github.com/user-attachments/assets/cadd5c35-a5b2-47fe-98d7-b749c6eb5dd2" />
+
 ## Features
 
 - **Comprehensive Analysis**: Scans folders for image and video files with missing EXIF date information
