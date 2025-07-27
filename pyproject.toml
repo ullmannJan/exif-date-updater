@@ -1,0 +1,39 @@
+[project]
+name = "exif-date-updater"
+version = "0.1.0"
+description = "A tool to analyze and update missing EXIF date information in image and video files"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    { name = "Jan Ullmann", email = "102742052+ullmannJan@users.noreply.github.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "exifread>=3.0.0",
+    "pillow>=10.0.0",
+    "python-dateutil>=2.8.0",
+    "ffmpeg-python>=0.2.0",
+    "pyside6>=6.5.0",
+    "piexif>=1.1.3",
+]
+
+[project.scripts]
+exif-date-updater = "exif_date_updater.cli:main"
+exif-date-updater-gui = "exif_date_updater.gui:run_gui"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "isort>=5.0.0",
+    "flake8>=6.0.0",
+]
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.8.3,<0.9.0"]
+build-backend = "uv_build"
