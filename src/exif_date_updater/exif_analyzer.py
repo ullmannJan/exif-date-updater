@@ -82,8 +82,13 @@ class ExifAnalyzer:
             'files_with_suggestions': 0
         }
     
-    def analyze_folder(self, folder_path: Union[str, Path]) -> List[MediaFile]:
-        """Analyze all media files in a folder for missing EXIF date information."""
+    def analyze_folder(self, folder_path: Union[str, Path], ignore_videos: bool = False) -> List[MediaFile]:
+        """Analyze all media files in a folder for missing EXIF date information.
+        
+        Args:
+            folder_path: Path to the folder to analyze
+            ignore_videos: If True, skip video files during analysis
+        """
         folder = Path(folder_path)
         if not folder.exists() or not folder.is_dir():
             raise ValueError(f"Invalid folder path: {folder_path}")
@@ -93,7 +98,11 @@ class ExifAnalyzer:
         
         # Find all media files
         media_files = []
-        for ext in self.IMAGE_EXTENSIONS | self.VIDEO_EXTENSIONS:
+        extensions_to_search = self.IMAGE_EXTENSIONS
+        if not ignore_videos:
+            extensions_to_search = extensions_to_search | self.VIDEO_EXTENSIONS
+            
+        for ext in extensions_to_search:
             media_files.extend(folder.rglob(f'*{ext}'))
         
         self.stats['total_files'] = len(media_files)

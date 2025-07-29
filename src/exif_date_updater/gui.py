@@ -47,15 +47,16 @@ class AnalysisWorker(QThread):
     finished = Signal(list)  # List of MediaFile objects
     error = Signal(str)  # Error message
     
-    def __init__(self, folder_path: Path):
+    def __init__(self, folder_path: Path, ignore_videos: bool = False):
         super().__init__()
         self.folder_path = folder_path
+        self.ignore_videos = ignore_videos
         self.analyzer = ExifAnalyzer()
     
     def run(self):
         try:
             self.progress.emit("Starting analysis...")
-            media_files = self.analyzer.analyze_folder(self.folder_path)
+            media_files = self.analyzer.analyze_folder(self.folder_path, ignore_videos=self.ignore_videos)
             self.progress.emit(f"Analysis complete! Found {len(media_files)} files.")
             self.finished.emit(media_files)
         except Exception as e:
@@ -224,6 +225,12 @@ class ExifDateUpdaterGUI(QMainWindow):
         self.show_all_files_cb.setChecked(True)
         table_options_layout.addWidget(self.show_all_files_cb)
         
+        # Add option to ignore video files
+        self.ignore_video_files_cb = QCheckBox("Ignore video files during analysis")
+        self.ignore_video_files_cb.setChecked(False)
+        self.ignore_video_files_cb.setToolTip("Skip video files completely during folder analysis")
+        table_options_layout.addWidget(self.ignore_video_files_cb)
+        
         # Add select all/none buttons
         self.select_all_btn = QPushButton("Select All")
         self.select_none_btn = QPushButton("Select None")
@@ -354,6 +361,7 @@ class ExifDateUpdaterGUI(QMainWindow):
         self.dry_run_btn.clicked.connect(self.dry_run_update)
         self.update_btn.clicked.connect(self.update_files)
         self.show_all_files_cb.stateChanged.connect(self.on_show_all_files_changed)
+        self.ignore_video_files_cb.stateChanged.connect(self.on_ignore_video_files_changed)
         
         # Connect update checkboxes to repopulate table when output options change
         self.update_datetime_original_cb.toggled.connect(self.populate_file_table)
@@ -395,12 +403,15 @@ class ExifDateUpdaterGUI(QMainWindow):
             return
         
         self.log("Starting file analysis...")
+        if self.ignore_video_files_cb.isChecked():
+            self.log("Video files will be ignored during analysis")
         self.set_ui_enabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)  # Indeterminate progress
         
         # Start worker thread
-        self.analysis_worker = AnalysisWorker(self.folder_path)
+        ignore_videos = self.ignore_video_files_cb.isChecked()
+        self.analysis_worker = AnalysisWorker(self.folder_path, ignore_videos)
         self.analysis_worker.progress.connect(self.log)
         self.analysis_worker.finished.connect(self.on_analysis_finished)
         self.analysis_worker.error.connect(self.on_analysis_error)
@@ -460,6 +471,27 @@ class ExifDateUpdaterGUI(QMainWindow):
             self.populate_file_table()
             self.update_status_bar()
     
+    def on_ignore_video_files_changed(self):
+        """Handle change in ignore video files checkbox."""
+        if self.media_files:
+            self.populate_file_table()
+            self.update_status_bar()
+    
+    def get_filtered_files(self):
+        """Get the current filtered list of files based on UI settings."""
+        if self.show_all_files_cb.isChecked():
+            files_to_show = self.media_files
+        else:
+            files_to_show = [f for f in self.media_files if f.missing_dates]
+        
+        # Filter out video files if the ignore option is checked
+        if self.ignore_video_files_cb.isChecked():
+            # Define video extensions (matching the analyzer)
+            video_extensions = {'.mp4', '.mov', '.avi', '.mkv', '.wmv', '.flv', '.webm', '.m4v', '.3gp', '.mts', '.m2ts'}
+            files_to_show = [f for f in files_to_show if f.extension.lower() not in video_extensions]
+        
+        return files_to_show
+    
     def on_source_changed(self, row: int, combo_index: int):
         """Handle source selection change in dropdown."""
         combo = self.file_table.cellWidget(row, 6)  # Source column is now index 6
@@ -476,10 +508,7 @@ class ExifDateUpdaterGUI(QMainWindow):
             # Update the MediaFile object if needed
             if hasattr(self, 'media_files') and row < len(self.media_files):
                 # Find the corresponding file (accounting for filtering)
-                if self.show_all_files_cb.isChecked():
-                    files_to_show = self.media_files
-                else:
-                    files_to_show = [f for f in self.media_files if f.missing_dates]
+                files_to_show = self.get_filtered_files()
                 
                 if row < len(files_to_show):
                     file = files_to_show[row]
@@ -556,7 +585,7 @@ class ExifDateUpdaterGUI(QMainWindow):
                 is_checked = checkbox.isChecked()
         
         # Get the file for this row to check date conditions
-        files_to_show = self.media_files if self.show_all_files_cb.isChecked() else [f for f in self.media_files if f.missing_dates]
+        files_to_show = self.get_filtered_files()
         file = None
         if row < len(files_to_show):
             file = files_to_show[row]
@@ -613,32 +642,39 @@ class ExifDateUpdaterGUI(QMainWindow):
             self.status_bar.showMessage("Ready - Drop a folder here or use the Select Folder button")
             return
             
-        missing_files = [f for f in self.media_files if f.missing_dates]
+        # Get the current filtered file list
+        files_to_show = self.get_filtered_files()
+        filtered_count = len(files_to_show)
         total_files = len(self.media_files)
-        missing_count = len(missing_files)
         
-        # Count selected files
+        # Count selected files (from the current filtered view)
         selected_files = self.get_selected_files()
         selected_count = len(selected_files)
         
+        # Build status message based on current filters
+        video_filter_text = " (Images Only)" if self.ignore_video_files_cb.isChecked() else ""
+        
         if self.show_all_files_cb.isChecked():
-            updatable_count = len([f for f in self.media_files if f.suggested_date or (hasattr(f, 'available_sources') and f.available_sources)])
-            self.status_bar.showMessage(f"Showing all {total_files} files, {missing_count} need updates, {updatable_count} can be updated, {selected_count} selected")
+            updatable_count = len([f for f in files_to_show if f.suggested_date or (hasattr(f, 'available_sources') and f.available_sources)])
+            self.status_bar.showMessage(f"Showing {filtered_count} of {total_files} files{video_filter_text}, {updatable_count} can be updated, {selected_count} selected")
         else:
-            self.status_bar.showMessage(f"Showing {missing_count} files with missing dates (total analyzed: {total_files}), {selected_count} selected")
+            self.status_bar.showMessage(f"Showing {filtered_count} files with missing dates{video_filter_text} (total analyzed: {total_files}), {selected_count} selected")
     
     def populate_file_table(self):
         """Populate the file table with analysis results."""
+        files_to_show = self.get_filtered_files()
+        
+        # Update group box title based on current filters
         if self.show_all_files_cb.isChecked():
-            # Show all files
-            files_to_show = self.media_files
-            # Update group box title
-            self.table_group.setTitle("All Analyzed Files")
+            if self.ignore_video_files_cb.isChecked():
+                self.table_group.setTitle("All Analyzed Files (Images Only)")
+            else:
+                self.table_group.setTitle("All Analyzed Files")
         else:
-            # Show only files with missing dates
-            files_to_show = [f for f in self.media_files if f.missing_dates]
-            # Update group box title
-            self.table_group.setTitle("Files with Missing EXIF Dates")
+            if self.ignore_video_files_cb.isChecked():
+                self.table_group.setTitle("Files with Missing EXIF Dates (Images Only)")
+            else:
+                self.table_group.setTitle("Files with Missing EXIF Dates")
         
         self.file_table.setRowCount(len(files_to_show))
         
@@ -833,7 +869,7 @@ class ExifDateUpdaterGUI(QMainWindow):
     
     def select_all_files(self):
         """Select all files that can be updated."""
-        files_to_show = self.media_files if self.show_all_files_cb.isChecked() else [f for f in self.media_files if f.missing_dates]
+        files_to_show = self.get_filtered_files()
         for file in files_to_show:
             checkbox = self.file_checkboxes.get(file)
             if checkbox:
@@ -841,7 +877,7 @@ class ExifDateUpdaterGUI(QMainWindow):
     
     def select_no_files(self):
         """Deselect all files."""
-        files_to_show = self.media_files if self.show_all_files_cb.isChecked() else [f for f in self.media_files if f.missing_dates]
+        files_to_show = self.get_filtered_files()
         for file in files_to_show:
             checkbox = self.file_checkboxes.get(file)
             if checkbox:
@@ -850,7 +886,7 @@ class ExifDateUpdaterGUI(QMainWindow):
     def select_highlighted_rows(self):
         """Check the checkboxes for all currently highlighted/selected table rows."""
         selected_indexes = self.file_table.selectionModel().selectedRows()
-        files_to_show = self.media_files if self.show_all_files_cb.isChecked() else [f for f in self.media_files if f.missing_dates]
+        files_to_show = self.get_filtered_files()
         
         for index in selected_indexes:
             row = index.row()
@@ -863,7 +899,7 @@ class ExifDateUpdaterGUI(QMainWindow):
     def toggle_selected_rows(self):
         """Toggle checkboxes for currently selected table rows."""
         selected_indexes = self.file_table.selectionModel().selectedRows()
-        files_to_show = self.media_files if self.show_all_files_cb.isChecked() else [f for f in self.media_files if f.missing_dates]
+        files_to_show = self.get_filtered_files()
         
         for index in selected_indexes:
             row = index.row()
@@ -876,7 +912,7 @@ class ExifDateUpdaterGUI(QMainWindow):
     def get_selected_files(self):
         """Get list of files selected for update."""
         selected_files = []
-        files_to_show = self.media_files if self.show_all_files_cb.isChecked() else [f for f in self.media_files if f.missing_dates]
+        files_to_show = self.get_filtered_files()
         
         for file in files_to_show:
             checkbox = self.file_checkboxes.get(file)
@@ -921,10 +957,7 @@ class ExifDateUpdaterGUI(QMainWindow):
     def sync_dropdown_selections(self):
         """Sync all dropdown selections back to MediaFile objects."""
         # Get the current files being displayed
-        if self.show_all_files_cb.isChecked():
-            files_to_show = self.media_files
-        else:
-            files_to_show = [f for f in self.media_files if f.missing_dates]
+        files_to_show = self.get_filtered_files()
         
         # Update each file based on its dropdown selection
         for row in range(self.file_table.rowCount()):
