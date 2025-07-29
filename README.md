@@ -1,6 +1,7 @@
 # EXIF Date Updater
 
 A Python tool to analyze and update missing EXIF date information in image files and extract dates from video filenames.
+
 <img width="1502" height="852" alt="image" src="https://github.com/user-attachments/assets/b8360f50-32f4-46d1-9407-67f6e6e18e1b" />
 
 ## Features
