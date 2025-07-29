@@ -45,6 +45,9 @@ class ExifAnalyzer:
     IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.tiff', '.tif', '.png', '.bmp', '.gif', '.webp', '.heic', '.heif'}
     VIDEO_EXTENSIONS = {'.mp4', '.mov', '.avi', '.mkv', '.wmv', '.flv', '.webm', '.m4v', '.3gp', '.mts', '.m2ts'}
     
+    # Reliable date sources for suggestions
+    RELIABLE_SOURCES = {'EXIF DateTimeOriginal', 'EXIF DateCreated', 'EXIF DateTimeDigitized', 'Filename Date'}
+    
     # Date patterns commonly found in filenames
     DATE_PATTERNS = [
         # Date and time patterns
@@ -300,7 +303,7 @@ class ExifAnalyzer:
         if 'DateTimeOriginal' in media_file.missing_dates and media_file.date_created:
             # DateTimeOriginal is missing but DateCreated exists - use DateCreated
             best_date = media_file.date_created
-            source = 'EXIF DateTime'
+            source = 'EXIF DateCreated'
         elif 'DateCreated' in media_file.missing_dates and media_file.datetime_original:
             # DateCreated is missing but DateTimeOriginal exists - use DateTimeOriginal
             best_date = media_file.datetime_original
@@ -309,8 +312,7 @@ class ExifAnalyzer:
         # If no EXIF date prioritization applies, use the original earliest-date logic
         if not best_date:
             # Define reliable sources (non-file system dates)
-            reliable_sources = {'EXIF DateTimeOriginal', 'EXIF DateTime', 'EXIF DateTimeDigitized', 'Filename Date'}
-            reliable_candidates = [c for c in valid_candidates if c[1] in reliable_sources]
+            reliable_candidates = [c for c in valid_candidates if c[1] in self.RELIABLE_SOURCES]
             
             if reliable_candidates:
                 # Among reliable sources, choose the earliest date

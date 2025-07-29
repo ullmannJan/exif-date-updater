@@ -32,7 +32,7 @@ def print_file_analysis(media_files: List[MediaFile]):
         if file.datetime_original:
             print(f"  - EXIF DateTimeOriginal: {file.datetime_original}")
         if file.date_created:
-            print(f"  - EXIF DateTime: {file.date_created}")
+            print(f"  - EXIF DateCreated: {file.date_created}")
         if file.datetime_digitized:
             print(f"  - EXIF DateTimeDigitized: {file.datetime_digitized}")
         if file.filename_date:
@@ -88,7 +88,7 @@ def confirm_update() -> bool:
 def main():
     """Main CLI function."""
     parser = argparse.ArgumentParser(
-        description="Analyze and update missing EXIF date information in image files and extract dates from video filenames"
+        description="Analyze and update missing EXIF date information in image and video files"
     )
     
     parser.add_argument(

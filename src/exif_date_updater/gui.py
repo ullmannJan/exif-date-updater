@@ -486,8 +486,9 @@ class ExifDateUpdaterGUI(QMainWindow):
         
         # Filter out video files if the ignore option is checked
         if self.ignore_video_files_cb.isChecked():
-            # Define video extensions (matching the analyzer)
-            video_extensions = {'.mp4', '.mov', '.avi', '.mkv', '.wmv', '.flv', '.webm', '.m4v', '.3gp', '.mts', '.m2ts'}
+            # Use the analyzer's video extensions constant
+            from .exif_analyzer import ExifAnalyzer
+            video_extensions = ExifAnalyzer.VIDEO_EXTENSIONS
             files_to_show = [f for f in files_to_show if f.extension.lower() not in video_extensions]
         
         return files_to_show
@@ -882,19 +883,6 @@ class ExifDateUpdaterGUI(QMainWindow):
             checkbox = self.file_checkboxes.get(file)
             if checkbox:
                 checkbox.setChecked(False)
-    
-    def select_highlighted_rows(self):
-        """Check the checkboxes for all currently highlighted/selected table rows."""
-        selected_indexes = self.file_table.selectionModel().selectedRows()
-        files_to_show = self.get_filtered_files()
-        
-        for index in selected_indexes:
-            row = index.row()
-            if row < len(files_to_show):
-                file = files_to_show[row]
-                checkbox = self.file_checkboxes.get(file)
-                if checkbox:
-                    checkbox.setChecked(True)
     
     def toggle_selected_rows(self):
         """Toggle checkboxes for currently selected table rows."""
