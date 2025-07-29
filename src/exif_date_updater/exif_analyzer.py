@@ -245,6 +245,7 @@ class ExifAnalyzer:
         
         if not media_file.date_created:
             media_file.missing_dates.append('DateCreated')
+
     
     def _suggest_date(self, media_file: MediaFile):
         """Suggest the best available date for missing fields, prioritizing the earliest date."""
@@ -255,7 +256,7 @@ class ExifAnalyzer:
             candidates.append((media_file.datetime_original, 'EXIF DateTimeOriginal'))
         
         if media_file.date_created:
-            candidates.append((media_file.date_created, 'EXIF DateTime'))
+            candidates.append((media_file.date_created, 'EXIF DateCreated'))
         
         if media_file.datetime_digitized:
             candidates.append((media_file.datetime_digitized, 'EXIF DateTimeDigitized'))

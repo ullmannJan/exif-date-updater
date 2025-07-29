@@ -227,11 +227,11 @@ class ExifDateUpdaterGUI(QMainWindow):
         # Add select all/none buttons
         self.select_all_btn = QPushButton("Select All")
         self.select_none_btn = QPushButton("Select None")
-        self.select_rows_btn = QPushButton("Select Highlighted Rows")
+        self.select_rows_btn = QPushButton("Invert Selection")
         
         self.select_all_btn.setToolTip("Select all files that have date suggestions available")
         self.select_none_btn.setToolTip("Deselect all files")
-        self.select_rows_btn.setToolTip("Check the checkboxes for all currently highlighted/selected table rows")
+        self.select_rows_btn.setToolTip("Invert the selection state of all currently highlighted/selected table rows")
         
         table_options_layout.addStretch()
         table_options_layout.addWidget(QLabel("Selection:"))
@@ -362,7 +362,7 @@ class ExifDateUpdaterGUI(QMainWindow):
         # Selection buttons
         self.select_all_btn.clicked.connect(self.select_all_files)
         self.select_none_btn.clicked.connect(self.select_no_files)
-        self.select_rows_btn.clicked.connect(self.select_highlighted_rows)
+        self.select_rows_btn.clicked.connect(self.toggle_selected_rows)
         
         # Keyboard shortcuts for table operations
         select_all_shortcut = QShortcut(QKeySequence.StandardKey.SelectAll, self.file_table)
