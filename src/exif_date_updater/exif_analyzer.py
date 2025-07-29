@@ -30,7 +30,6 @@ class MediaFile:
         
         # Other extracted dates
         self.filename_date: Optional[datetime] = None
-        self.video_creation_date: Optional[datetime] = None
         
         # Analysis results
         self.missing_dates: List[str] = []
@@ -188,63 +187,10 @@ class ExifAnalyzer:
             print(f"Error extracting EXIF from {media_file.path}: {e}")
     
     def _extract_video_metadata(self, media_file: MediaFile):
-        """Extract EXIF-like metadata from video files using the same tools as images."""
-        try:
-            # Try exifread on video files - many video formats contain EXIF-like metadata
-            # However, most video files won't have traditional EXIF data
-            with open(media_file.path, 'rb') as f:
-                try:
-                    tags = exifread.process_file(f, stop_tag='EXIF DateTimeOriginal')
-                    
-                    # Look for standard EXIF date tags (rare in video files)
-                    if 'EXIF DateTimeOriginal' in tags:
-                        media_file.datetime_original = self._parse_exif_datetime(str(tags['EXIF DateTimeOriginal']))
-                    
-                    if 'EXIF DateTime' in tags and not media_file.date_created:
-                        media_file.date_created = self._parse_exif_datetime(str(tags['EXIF DateTime']))
-                    
-                    if 'EXIF DateTimeDigitized' in tags:
-                        media_file.datetime_digitized = self._parse_exif_datetime(str(tags['EXIF DateTimeDigitized']))
-                    
-                    # Also check for video-specific date tags that might be present
-                    video_date_tags = [
-                        'Image DateTime',
-                        'GPS GPSDate', 
-                        'GPS GPSTimeStamp',
-                        'EXIF CreateDate',
-                        'EXIF ModifyDate'
-                    ]
-                    
-                    for tag_name in video_date_tags:
-                        if tag_name in tags and not media_file.video_creation_date:
-                            try:
-                                date_value = str(tags[tag_name])
-                                parsed_date = self._parse_exif_datetime(date_value)
-                                if not parsed_date:
-                                    # Try video datetime format
-                                    parsed_date = self._parse_video_datetime(date_value)
-                                if parsed_date:
-                                    media_file.video_creation_date = parsed_date
-                                    # Also set as datetime_original if not already set
-                                    if not media_file.datetime_original:
-                                        media_file.datetime_original = parsed_date
-                                    break
-                            except Exception:
-                                continue
-                                
-                except Exception as e:
-                    # Most video files don't have EXIF data that exifread can process
-                    # This is expected behavior, not an error
-                    if "File format not recognized" not in str(e):
-                        print(f"Info: Could not extract EXIF from video file {media_file.name}: {e}")
-                    pass
-                            
-        except Exception as e:
-            # Video files might not have EXIF data, which is fine
-            # We'll rely on filename parsing and file system dates as fallback
-            if "File format not recognized" not in str(e):
-                print(f"Info: Video metadata extraction failed for {media_file.name}: {e}")
-            pass
+        """Video metadata extraction is not currently implemented."""
+        # Video metadata extraction is not implemented - skip processing
+        # Users can still rely on filename parsing and file system dates
+        pass
     
     def _extract_filename_date(self, media_file: MediaFile):
         """Extract date information from filename."""
@@ -314,9 +260,6 @@ class ExifAnalyzer:
         if media_file.datetime_digitized:
             candidates.append((media_file.datetime_digitized, 'EXIF DateTimeDigitized'))
         
-        if media_file.video_creation_date:
-            candidates.append((media_file.video_creation_date, 'Video Creation Date'))
-        
         if media_file.filename_date:
             candidates.append((media_file.filename_date, 'Filename Date'))
         
@@ -356,7 +299,7 @@ class ExifAnalyzer:
         # If no EXIF date prioritization applies, use the original earliest-date logic
         if not best_date:
             # Define reliable sources (non-file system dates)
-            reliable_sources = {'EXIF DateTimeOriginal', 'EXIF DateTime', 'EXIF DateTimeDigitized', 'Video Creation Date', 'Filename Date'}
+            reliable_sources = {'EXIF DateTimeOriginal', 'EXIF DateTime', 'EXIF DateTimeDigitized', 'Filename Date'}
             reliable_candidates = [c for c in valid_candidates if c[1] in reliable_sources]
             
             if reliable_candidates:
@@ -374,27 +317,6 @@ class ExifAnalyzer:
         try:
             # EXIF datetime format: 'YYYY:MM:DD HH:MM:SS'
             return datetime.strptime(date_str, '%Y:%m:%d %H:%M:%S')
-        except (ValueError, TypeError):
-            return None
-    
-    def _parse_video_datetime(self, date_str: str) -> Optional[datetime]:
-        """Parse video metadata datetime string."""
-        try:
-            # Common video datetime formats
-            formats = [
-                '%Y-%m-%dT%H:%M:%S.%fZ',  # ISO format with microseconds
-                '%Y-%m-%dT%H:%M:%SZ',     # ISO format
-                '%Y-%m-%d %H:%M:%S',      # Standard format
-                '%Y:%m:%d %H:%M:%S',      # EXIF-style format
-            ]
-            
-            for fmt in formats:
-                try:
-                    return datetime.strptime(date_str, fmt)
-                except ValueError:
-                    continue
-            
-            return None
         except (ValueError, TypeError):
             return None
     

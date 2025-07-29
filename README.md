@@ -1,15 +1,14 @@
 # EXIF Date Updater
 
-A Python tool to analyze and update missing EXIF date information in image and video files.
+A Python tool to analyze and update missing EXIF date information in image files and extract dates from video filenames.
 
 <img width="1804" height="1247" alt="image" src="https://github.com/user-attachments/assets/7f9dbc29-a742-44cb-89a6-cb5b171aab6d" />
 
 ## Features
 
-- **Comprehensive Analysis**: Scans folders for image and video files with missing EXIF date information
+- **Comprehensive Analysis**: Scans folders for image and video files with missing EXIF date information (video metadata extraction not currently implemented - relies on filename patterns and file dates)
 - **Smart Date Detection**: Extracts dates from multiple sources:
   - Existing EXIF data (DateTimeOriginal, DateTime, DateTimeDigitized)
-  - Video metadata (creation_time, encoded_date)
   - Filename patterns (various date formats)
   - File creation/modification dates
 - **Intelligent Suggestions**: Prioritizes date sources by reliability and confidence
@@ -142,10 +141,9 @@ The tool prioritizes date sources in the following order:
 
 1. **EXIF DateTimeOriginal** (confidence: 100%) - Most reliable
 2. **EXIF DateTimeDigitized** (confidence: 90%) - Very reliable
-3. **Video Creation Date** (confidence: 80%) - Reliable for videos
-4. **Filename Date** (confidence: 70%) - Good if filename contains date
-5. **File Creation Date** (confidence: 50%) - May not be original
-6. **File Modification Date** (confidence: 30%) - Least reliable
+3. **Filename Date** (confidence: 70%) - Good if filename contains date
+4. **File Creation Date** (confidence: 50%) - May not be original
+5. **File Modification Date** (confidence: 30%) - Least reliable
 
 ### Filename Date Patterns
 
@@ -213,7 +211,6 @@ removed_count = updater.cleanup_backups(Path("/path/to/photos"))
   - exifread - Reading EXIF data
   - Pillow - Image processing
   - python-dateutil - Date parsing
-  - ffmpeg-python - Video metadata extraction
   - piexif - Writing EXIF data
   - PySide6 - GUI interface
 

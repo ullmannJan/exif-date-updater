@@ -53,7 +53,6 @@ class TestInstallation(unittest.TestCase):
             'PIL',      # Pillow
             'exifread', # exifread
             'piexif',   # piexif
-            'ffmpeg',   # ffmpeg-python
         ]
         
         for module_name in required_modules:

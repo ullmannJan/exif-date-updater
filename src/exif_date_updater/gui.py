@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from PySide6.QtCore import QThread, Signal, Qt
-from PySide6.QtGui import QFont, QTextCursor, QColor, QKeySequence, QShortcut, QPalette, QIcon, QPixmap
+from PySide6.QtGui import QFont, QTextCursor, QColor, QKeySequence, QShortcut, QPalette, QIcon
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFileDialog, QTableWidget, QTableWidgetItem,
@@ -242,9 +242,9 @@ class ExifDateUpdaterGUI(QMainWindow):
         table_layout.addLayout(table_options_layout)
         
         self.file_table = QTableWidget()
-        self.file_table.setColumnCount(7)
+        self.file_table.setColumnCount(8)
         self.file_table.setHorizontalHeaderLabels([
-            "Update", "Filename", "DateTimeOriginal", "DateTime/DateCreated", "Suggested Date", "Source", "Size"
+            "Update", "Filename", "Type", "DateTimeOriginal", "DateTime/DateCreated", "Suggested Date", "Source", "Size"
         ])
         
         # Enable multiselect functionality
@@ -462,14 +462,14 @@ class ExifDateUpdaterGUI(QMainWindow):
     
     def on_source_changed(self, row: int, combo_index: int):
         """Handle source selection change in dropdown."""
-        combo = self.file_table.cellWidget(row, 5)  # Source column is now index 5
+        combo = self.file_table.cellWidget(row, 6)  # Source column is now index 6
         if isinstance(combo, (QComboBox, NoScrollComboBox)) and combo_index >= 0:
             # Get the selected source data
             date, source_name = combo.itemData(combo_index)
             
             # Update the suggested date column
             date_str = date.strftime("%Y-%m-%d %H:%M:%S")
-            date_item = self.file_table.item(row, 4)  # Suggested date column is now index 4
+            date_item = self.file_table.item(row, 5)  # Suggested date column is now index 5
             if date_item:
                 date_item.setText(date_str)
             
@@ -582,13 +582,13 @@ class ExifDateUpdaterGUI(QMainWindow):
                     # For checked files, determine color based on content and checkbox states
                     should_be_red = False
                     
-                    if file and col == 2:  # DateTimeOriginal column
+                    if file and col == 3:  # DateTimeOriginal column (now index 3)
                         # Red if field is missing OR will be overwritten by checkbox selection
                         has_missing_data = 'DateTimeOriginal' in file.missing_dates and file.suggested_date
                         will_be_overwritten = self.update_datetime_original_cb.isChecked() and file.suggested_date
                         should_be_red = has_missing_data or will_be_overwritten
                         
-                    elif file and col == 3:  # DateTime/DateCreated column
+                    elif file and col == 4:  # DateTime/DateCreated column (now index 4)
                         # Red if field is missing OR will be overwritten by checkbox selection
                         has_missing_data = 'DateTime' in file.missing_dates and file.suggested_date
                         will_be_overwritten = self.update_date_created_cb.isChecked() and file.suggested_date
@@ -678,7 +678,13 @@ class ExifDateUpdaterGUI(QMainWindow):
             filename_item.setToolTip(str(file.path))
             self.file_table.setItem(row, 1, filename_item)
             
-            # DateTimeOriginal column
+            # File Type - show the file extension
+            file_extension = file.extension.lstrip('.').upper()  # Remove dot and make uppercase
+            type_item = QTableWidgetItem(file_extension)
+            type_item.setToolTip(f"File extension: {file.extension}")
+            self.file_table.setItem(row, 2, type_item)
+            
+            # DateTimeOriginal column (shifted to index 3)
             datetime_original_item = QTableWidgetItem()
             if file.datetime_original:
                 # If checkbox is selected and we have a suggested date, show what will be written
@@ -697,7 +703,7 @@ class ExifDateUpdaterGUI(QMainWindow):
                 else:
                     datetime_original_item.setText("")
                     datetime_original_item.setData(Qt.ItemDataRole.UserRole, 0)  # Sort empty dates to the bottom
-            self.file_table.setItem(row, 2, datetime_original_item)
+            self.file_table.setItem(row, 3, datetime_original_item)
             
             # DateTime/DateCreated column
             datetime_created_item = QTableWidgetItem()
@@ -718,7 +724,7 @@ class ExifDateUpdaterGUI(QMainWindow):
                 else:
                     datetime_created_item.setText("")
                     datetime_created_item.setData(Qt.ItemDataRole.UserRole, 0)  # Sort empty dates to the bottom
-            self.file_table.setItem(row, 3, datetime_created_item)
+            self.file_table.setItem(row, 4, datetime_created_item)
             
             # Suggested date and source dropdown
             if file.suggested_date or (hasattr(file, 'available_sources') and file.available_sources):
@@ -727,7 +733,7 @@ class ExifDateUpdaterGUI(QMainWindow):
                     date_str = file.suggested_date.strftime("%Y-%m-%d %H:%M:%S")
                     suggested_item = QTableWidgetItem(date_str)
                     suggested_item.setData(Qt.ItemDataRole.UserRole, file.suggested_date.timestamp())
-                    self.file_table.setItem(row, 4, suggested_item)
+                    self.file_table.setItem(row, 5, suggested_item)
                 else:
                     # For files without suggestions but with available sources, use the first available source as default
                     if hasattr(file, 'available_sources') and file.available_sources:
@@ -735,7 +741,7 @@ class ExifDateUpdaterGUI(QMainWindow):
                         date_str = default_date.strftime("%Y-%m-%d %H:%M:%S")
                         suggested_item = QTableWidgetItem(date_str)
                         suggested_item.setData(Qt.ItemDataRole.UserRole, default_date.timestamp())
-                        self.file_table.setItem(row, 4, suggested_item)
+                        self.file_table.setItem(row, 5, suggested_item)
                         # Set the file's suggested date to the default for processing
                         file.suggested_date = default_date
                         file.source = default_source
@@ -767,35 +773,35 @@ class ExifDateUpdaterGUI(QMainWindow):
                     source = getattr(file, 'source', 'Unknown')
                     source_combo.addItem(source, (file.suggested_date, source))
                 
-                self.file_table.setCellWidget(row, 5, source_combo)
+                self.file_table.setCellWidget(row, 6, source_combo)
                 
                 # Add hidden item for sorting by source name
                 current_source = getattr(file, 'source', 'Unknown')
                 source_sort_item = QTableWidgetItem(current_source)
                 source_sort_item.setData(Qt.ItemDataRole.UserRole, current_source)
-                self.file_table.setItem(row, 5, source_sort_item)
+                self.file_table.setItem(row, 6, source_sort_item)
             else:
                 no_options_item = QTableWidgetItem("No options available")
                 no_options_item.setData(Qt.ItemDataRole.UserRole, 0)  # Sort to bottom
-                self.file_table.setItem(row, 4, no_options_item)
+                self.file_table.setItem(row, 5, no_options_item)
                 
                 # Empty source dropdown for files without any date options
                 source_combo = NoScrollComboBox()
                 source_combo.setEnabled(False)
                 source_combo.addItem("-")
-                self.file_table.setCellWidget(row, 5, source_combo)
+                self.file_table.setCellWidget(row, 6, source_combo)
                 
                 # Add hidden item for sorting (empty sources sort to bottom)
                 empty_source_item = QTableWidgetItem("-")
                 empty_source_item.setData(Qt.ItemDataRole.UserRole, "")
-                self.file_table.setItem(row, 5, empty_source_item)
+                self.file_table.setItem(row, 6, empty_source_item)
             
             # File size
             size_str = f"{file.size:,} bytes"
             size_item = NumericTableWidgetItem(size_str, file.size)
             size_item.setData(Qt.ItemDataRole.UserRole, file.size)
 
-            self.file_table.setItem(row, 6, size_item)
+            self.file_table.setItem(row, 7, size_item)
         
         # Update appearance of all rows after population
         for row in range(self.file_table.rowCount()):
@@ -922,7 +928,7 @@ class ExifDateUpdaterGUI(QMainWindow):
         
         # Update each file based on its dropdown selection
         for row in range(self.file_table.rowCount()):
-            combo = self.file_table.cellWidget(row, 5)  # Source column is now index 5
+            combo = self.file_table.cellWidget(row, 6)  # Source column is now index 6
             if isinstance(combo, (QComboBox, NoScrollComboBox)) and combo.currentIndex() >= 0 and row < len(files_to_show):
                 # Get the selected source data
                 date, source_name = combo.itemData(combo.currentIndex())

@@ -1,7 +1,7 @@
 [project]
 name = "exif-date-updater"
 version = "0.1.0"
-description = "A tool to analyze and update missing EXIF date information in image and video files"
+description = "A tool to analyze and update missing EXIF date information in image files and extract dates from video filenames"
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [
@@ -12,7 +12,6 @@ dependencies = [
     "exifread>=3.0.0",
     "pillow>=10.0.0",
     "python-dateutil>=2.8.0",
-    "ffmpeg-python>=0.2.0",
     "pyside6>=6.5.0",
     "piexif>=1.1.3",
 ]
