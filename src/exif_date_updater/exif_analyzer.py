@@ -10,6 +10,7 @@ from typing import List, Optional, Union
 import exifread
 from PIL import Image
 from PIL.ExifTags import TAGS
+from pillow_heif import HeifImagePlugin
 
 
 class MediaFile:
