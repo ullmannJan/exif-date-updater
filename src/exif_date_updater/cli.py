@@ -110,6 +110,12 @@ def main():
     )
     
     parser.add_argument(
+        "--include-subfolders",
+        action="store_true",
+        help="Search recursively in subfolders for media files"
+    )
+    
+    parser.add_argument(
         "--no-backup",
         action="store_true",
         help="Don't create backup files when updating"
@@ -169,11 +175,13 @@ def main():
     
     # Analyze files
     print(f"Analyzing media files in: {folder_path}")
+    if args.include_subfolders:
+        print("Including subfolders in analysis...")
     print("This may take a moment for large collections...")
     
     analyzer = ExifAnalyzer()
     try:
-        analyzer.analyze_folder(folder_path)
+        analyzer.analyze_folder(folder_path, include_subfolders=args.include_subfolders)
     except Exception as e:
         print(f"Error analyzing folder: {e}")
         sys.exit(1)

@@ -47,16 +47,21 @@ class AnalysisWorker(QThread):
     finished = Signal(list)  # List of MediaFile objects
     error = Signal(str)  # Error message
     
-    def __init__(self, folder_path: Path, ignore_videos: bool = False):
+    def __init__(self, folder_path: Path, ignore_videos: bool = False, include_subfolders: bool = True):
         super().__init__()
         self.folder_path = folder_path
         self.ignore_videos = ignore_videos
+        self.include_subfolders = include_subfolders
         self.analyzer = ExifAnalyzer()
     
     def run(self):
         try:
             self.progress.emit("Starting analysis...")
-            media_files = self.analyzer.analyze_folder(self.folder_path, ignore_videos=self.ignore_videos)
+            media_files = self.analyzer.analyze_folder(
+                self.folder_path, 
+                ignore_videos=self.ignore_videos,
+                include_subfolders=self.include_subfolders
+            )
             self.progress.emit(f"Analysis complete! Found {len(media_files)} files.")
             self.finished.emit(media_files)
         except Exception as e:
@@ -231,6 +236,12 @@ class ExifDateUpdaterGUI(QMainWindow):
         self.ignore_video_files_cb.setToolTip("Skip video files completely during folder analysis")
         table_options_layout.addWidget(self.ignore_video_files_cb)
         
+        # Add option to include subfolders
+        self.include_subfolders_cb = QCheckBox("Include subfolders")
+        self.include_subfolders_cb.setChecked(False)
+        self.include_subfolders_cb.setToolTip("Search recursively in subfolders for media files")
+        table_options_layout.addWidget(self.include_subfolders_cb)
+        
         # Add select all/none buttons
         self.select_all_btn = QPushButton("Select All")
         self.select_none_btn = QPushButton("Select None")
@@ -251,7 +262,7 @@ class ExifDateUpdaterGUI(QMainWindow):
         self.file_table = QTableWidget()
         self.file_table.setColumnCount(8)
         self.file_table.setHorizontalHeaderLabels([
-            "Update", "Filename", "Type", "DateTimeOriginal", "DateTime/DateCreated", "Suggested Date", "Source", "Size"
+            "Update", "Filename", "Type", "DateTimeOriginal", "DateCreated", "Suggested Date", "Source", "Size"
         ])
         
         # Enable multiselect functionality
@@ -279,7 +290,7 @@ class ExifDateUpdaterGUI(QMainWindow):
                 elif col == 2:
                     item.setToolTip("Current DateTimeOriginal EXIF value (empty if missing)")
                 elif col == 3:
-                    item.setToolTip("Current DateTime/DateCreated EXIF value (empty if missing)")
+                    item.setToolTip("Current DateCreated EXIF value (empty if missing)")
                 elif col == 4:
                     item.setToolTip("Suggested date based on selected source")
                 elif col == 5:
@@ -291,7 +302,7 @@ class ExifDateUpdaterGUI(QMainWindow):
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Update checkbox
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)  # Filename
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # DateTimeOriginal
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # DateTime/DateCreated
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # DateCreated
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # Suggested Date
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)  # Source (dropdown menu)
         header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)  # Size
@@ -312,7 +323,7 @@ class ExifDateUpdaterGUI(QMainWindow):
         
         self.update_datetime_original_cb = QCheckBox("Update DateTimeOriginal")
         self.update_datetime_original_cb.setChecked(True)
-        self.update_date_created_cb = QCheckBox("Update DateTime/DateCreated")
+        self.update_date_created_cb = QCheckBox("Update DateCreated")
         self.update_date_created_cb.setChecked(True)
         self.create_backup_cb = QCheckBox("Create backup files")
         self.create_backup_cb.setChecked(False)
@@ -362,6 +373,7 @@ class ExifDateUpdaterGUI(QMainWindow):
         self.update_btn.clicked.connect(self.update_files)
         self.show_all_files_cb.stateChanged.connect(self.on_show_all_files_changed)
         self.ignore_video_files_cb.stateChanged.connect(self.on_ignore_video_files_changed)
+        self.include_subfolders_cb.stateChanged.connect(self.on_include_subfolders_changed)
         
         # Connect update checkboxes to repopulate table when output options change
         self.update_datetime_original_cb.toggled.connect(self.populate_file_table)
@@ -386,8 +398,11 @@ class ExifDateUpdaterGUI(QMainWindow):
     
     def select_folder(self):
         """Open folder selection dialog."""
+        # Use currently selected folder as starting directory, if available
+        start_directory = str(self.folder_path) if hasattr(self, 'folder_path') and self.folder_path else ""
+        
         folder = QFileDialog.getExistingDirectory(
-            self, "Select folder containing media files"
+            self, "Select folder containing media files", start_directory
         )
         
         if folder:
@@ -405,13 +420,16 @@ class ExifDateUpdaterGUI(QMainWindow):
         self.log("Starting file analysis...")
         if self.ignore_video_files_cb.isChecked():
             self.log("Video files will be ignored during analysis")
+        if self.include_subfolders_cb.isChecked():
+            self.log("Including subfolders in analysis")
         self.set_ui_enabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)  # Indeterminate progress
         
         # Start worker thread
         ignore_videos = self.ignore_video_files_cb.isChecked()
-        self.analysis_worker = AnalysisWorker(self.folder_path, ignore_videos)
+        include_subfolders = self.include_subfolders_cb.isChecked()
+        self.analysis_worker = AnalysisWorker(self.folder_path, ignore_videos, include_subfolders)
         self.analysis_worker.progress.connect(self.log)
         self.analysis_worker.finished.connect(self.on_analysis_finished)
         self.analysis_worker.error.connect(self.on_analysis_error)
@@ -476,6 +494,12 @@ class ExifDateUpdaterGUI(QMainWindow):
         if self.media_files:
             self.populate_file_table()
             self.update_status_bar()
+    
+    def on_include_subfolders_changed(self):
+        """Handle change in include subfolders checkbox."""
+        # Note: This only affects future analysis runs, not current data
+        # The user needs to re-analyze to see the effect
+        pass
     
     def get_filtered_files(self):
         """Get the current filtered list of files based on UI settings."""
@@ -618,9 +642,9 @@ class ExifDateUpdaterGUI(QMainWindow):
                         will_be_overwritten = self.update_datetime_original_cb.isChecked() and file.suggested_date
                         should_be_red = has_missing_data or will_be_overwritten
                         
-                    elif file and col == 4:  # DateTime/DateCreated column (now index 4)
+                    elif file and col == 4:  # DateCreated column (now index 4)
                         # Red if field is missing OR will be overwritten by checkbox selection
-                        has_missing_data = 'DateTime' in file.missing_dates and file.suggested_date
+                        has_missing_data = 'DateCreated' in file.missing_dates and file.suggested_date
                         will_be_overwritten = self.update_date_created_cb.isChecked() and file.suggested_date
                         should_be_red = has_missing_data or will_be_overwritten
                     
@@ -742,7 +766,7 @@ class ExifDateUpdaterGUI(QMainWindow):
                     datetime_original_item.setData(Qt.ItemDataRole.UserRole, 0)  # Sort empty dates to the bottom
             self.file_table.setItem(row, 3, datetime_original_item)
             
-            # DateTime/DateCreated column
+            # DateCreated column
             datetime_created_item = QTableWidgetItem()
             if file.date_created:
                 # If checkbox is selected and we have a suggested date, show what will be written

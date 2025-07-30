@@ -85,12 +85,13 @@ class ExifAnalyzer:
             'files_with_suggestions': 0
         }
     
-    def analyze_folder(self, folder_path: Union[str, Path], ignore_videos: bool = False) -> List[MediaFile]:
+    def analyze_folder(self, folder_path: Union[str, Path], ignore_videos: bool = False, include_subfolders: bool = True) -> List[MediaFile]:
         """Analyze all media files in a folder for missing EXIF date information.
         
         Args:
             folder_path: Path to the folder to analyze
             ignore_videos: If True, skip video files during analysis
+            include_subfolders: If True, search recursively in subfolders
         """
         folder = Path(folder_path)
         if not folder.exists() or not folder.is_dir():
@@ -106,7 +107,10 @@ class ExifAnalyzer:
             extensions_to_search = extensions_to_search | self.VIDEO_EXTENSIONS
             
         for ext in extensions_to_search:
-            media_files.extend(folder.rglob(f'*{ext}'))
+            if include_subfolders:
+                media_files.extend(folder.rglob(f'*{ext}'))
+            else:
+                media_files.extend(folder.glob(f'*{ext}'))
         
         self.stats['total_files'] = len(media_files)
         
@@ -161,6 +165,15 @@ class ExifAnalyzer:
     def _extract_image_exif(self, media_file: MediaFile):
         """Extract EXIF data from image files."""
         try:
+            # Use standard EXIF extraction for all image files (including HEIC)
+            self._extract_standard_exif(media_file)
+                
+        except Exception as e:
+            print(f"Error extracting EXIF from {media_file.path}: {e}")
+    
+    def _extract_standard_exif(self, media_file: MediaFile):
+        """Extract EXIF data from standard image formats (JPEG, TIFF, etc.)."""
+        try:
             # Try with PIL first
             with Image.open(media_file.path) as img:
                 # Use getexif() instead of deprecated _getexif()
@@ -194,7 +207,7 @@ class ExifAnalyzer:
                 except Exception as e:
                     # Some image files might have corrupted or unsupported EXIF data
                     print(f"Info: Could not extract detailed EXIF from {media_file.name}: {e}")
-                        
+            
         except Exception as e:
             print(f"Error extracting EXIF from {media_file.path}: {e}")
     

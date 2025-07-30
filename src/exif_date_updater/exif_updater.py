@@ -6,7 +6,6 @@ import shutil
 from pathlib import Path
 from typing import List
 
-from PIL import Image
 import piexif
 
 from .exif_analyzer import MediaFile
@@ -30,7 +29,7 @@ class ExifUpdater:
         Args:
             media_file: MediaFile object with suggested date
             update_datetime_original: Whether to update DateTimeOriginal
-            update_date_created: Whether to update DateCreated/DateTime
+            update_date_created: Whether to update DateCreated
             dry_run: If True, only simulate the update without actual changes
             
         Returns:
@@ -112,7 +111,12 @@ class ExifUpdater:
     def _update_image_exif(self, media_file: MediaFile, 
                           update_datetime_original: bool,
                           update_date_created: bool) -> bool:
-        """Update EXIF data for image files using piexif."""
+        """
+        Update EXIF data for image files using piexif.
+        
+        Uses piexif.insert() to preserve original image data and file size,
+        with PIL fallback for compatibility.
+        """
         try:
             # Ensure we have a suggested date (double-check for safety)
             if not media_file.suggested_date:
@@ -139,23 +143,35 @@ class ExifUpdater:
                 exif_dict["Exif"][piexif.ExifIFD.DateTimeOriginal] = exif_date_str
                 print(f"  - Setting DateTimeOriginal: {exif_date_str}")
             
-            # Update DateTime (DateCreated) if requested and missing
+            # Update DateCreated if requested and missing
             if (update_date_created and 
                 'DateCreated' in media_file.missing_dates):
                 exif_dict["0th"][piexif.ImageIFD.DateTime] = exif_date_str
                 exif_dict["Exif"][piexif.ExifIFD.DateTimeDigitized] = exif_date_str
-                print(f"  - Setting DateTime/DateTimeDigitized: {exif_date_str}")
+                print(f"  - Setting DateTimeDigitized: {exif_date_str}")
             
             # Convert back to bytes and save
             exif_bytes = piexif.dump(exif_dict)
             
-            # Use PIL to save the image with new EXIF data
-            with Image.open(media_file.path) as img:
-                # Convert to RGB if necessary (for JPEG compatibility)
-                if img.mode in ('RGBA', 'LA', 'P'):
-                    img = img.convert('RGB')
+            try:
+                # Use piexif.insert to preserve original image data and only update EXIF
+                # This avoids recompression and maintains original file size
+                piexif.insert(exif_bytes, str(media_file.path))
+            except Exception as insert_error:
+                # Fallback: If piexif.insert fails, use PIL but try to preserve quality
+                print(f"Warning: piexif.insert failed for {media_file.name}, using fallback method: {insert_error}")
+                from PIL import Image
                 
-                img.save(media_file.path, exif=exif_bytes, quality=95, optimize=True)
+                with Image.open(media_file.path) as img:
+                    # Convert to RGB if necessary (for JPEG compatibility)
+                    if img.mode in ('RGBA', 'LA', 'P'):
+                        img = img.convert('RGB')
+                    
+                    # For JPEG files, use conservative quality settings
+                    if media_file.path.suffix.lower() in {'.jpg', '.jpeg'}:
+                        img.save(media_file.path, exif=exif_bytes, quality=90, optimize=False)
+                    else:
+                        img.save(media_file.path, exif=exif_bytes)
             
             return True
             
