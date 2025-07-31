@@ -5,14 +5,15 @@ GUI interface for the EXIF Date Updater using PySide6.
 import sys
 from pathlib import Path
 from typing import List, Optional
+from datetime import datetime
 
-from PySide6.QtCore import QThread, Signal, Qt
+from PySide6.QtCore import QThread, Signal, Qt, QDateTime
 from PySide6.QtGui import QFont, QTextCursor, QColor, QKeySequence, QShortcut, QPalette, QIcon
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFileDialog, QTableWidget, QTableWidgetItem,
     QTextEdit, QProgressBar, QCheckBox, QGroupBox, QMessageBox,
-    QSplitter, QHeaderView, QStatusBar, QComboBox
+    QSplitter, QHeaderView, QStatusBar, QComboBox, QDateTimeEdit, QDialog
 )
 
 from .exif_analyzer import ExifAnalyzer, MediaFile
@@ -38,6 +39,71 @@ class NoScrollComboBox(QComboBox):
     def wheelEvent(self, event):
         """Ignore wheel events to allow table scrolling."""
         event.ignore()
+
+
+class ManualDateDialog(QDialog):
+    """Dialog for manually entering date and time."""
+    
+    def __init__(self, parent=None, initial_date=None):
+        super().__init__(parent)
+        self.setWindowTitle("Enter Manual Date and Time")
+        self.setModal(True)
+        self.resize(300, 150)
+        
+        layout = QVBoxLayout(self)
+        
+        # Add instruction label
+        instruction = QLabel("Enter the date and time for this file:")
+        layout.addWidget(instruction)
+        
+        # Date/time picker
+        self.datetime_edit = QDateTimeEdit()
+        self.datetime_edit.setDisplayFormat("yyyy-MM-dd hh:mm:ss")
+        self.datetime_edit.setCalendarPopup(True)
+        
+        # Set initial date - use provided date, current file's suggestion, or current time
+        if initial_date:
+            qt_datetime = QDateTime.fromSecsSinceEpoch(int(initial_date.timestamp()))
+            self.datetime_edit.setDateTime(qt_datetime)
+        else:
+            # Default to current date/time
+            self.datetime_edit.setDateTime(QDateTime.currentDateTime())
+        
+        layout.addWidget(self.datetime_edit)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        self.ok_button = QPushButton("OK")
+        self.ok_button.clicked.connect(self.accept)
+        button_layout.addWidget(self.ok_button)
+        
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(self.cancel_button)
+        
+        layout.addLayout(button_layout)
+    
+    def get_datetime(self) -> datetime:
+        """Return the selected datetime as a Python datetime object."""
+        qt_datetime = self.datetime_edit.dateTime()
+        # Use toPython() method which is more reliable than timestamp conversion
+        try:
+            result = qt_datetime.toPython()
+            # Ensure we got a datetime object
+            if isinstance(result, datetime):
+                return result
+            else:
+                # Fallback if toPython() didn't return a datetime
+                raise ValueError("toPython() did not return a datetime object")
+        except (OSError, ValueError, OverflowError, AttributeError):
+            # Fallback: manually construct datetime from components
+            date = qt_datetime.date()
+            time = qt_datetime.time()
+            return datetime(
+                date.year(), date.month(), date.day(),
+                time.hour(), time.minute(), time.second()
+            )
 
 
 class AnalysisWorker(QThread):
@@ -260,9 +326,9 @@ class ExifDateUpdaterGUI(QMainWindow):
         table_layout.addLayout(table_options_layout)
         
         self.file_table = QTableWidget()
-        self.file_table.setColumnCount(8)
+        self.file_table.setColumnCount(7)
         self.file_table.setHorizontalHeaderLabels([
-            "Update", "Filename", "Type", "DateTimeOriginal", "DateCreated", "Suggested Date", "Source", "Size"
+            "Update", "Filename", "Type", "DateTimeOriginal", "DateCreated", "Source", "Size"
         ])
         
         # Enable multiselect functionality
@@ -288,11 +354,11 @@ class ExifDateUpdaterGUI(QMainWindow):
                 elif col == 1:
                     item.setToolTip("Filename")
                 elif col == 2:
-                    item.setToolTip("Current DateTimeOriginal EXIF value (empty if missing)")
+                    item.setToolTip("File type/extension")
                 elif col == 3:
-                    item.setToolTip("Current DateCreated EXIF value (empty if missing)")
+                    item.setToolTip("Current DateTimeOriginal EXIF value (empty if missing)")
                 elif col == 4:
-                    item.setToolTip("Suggested date based on selected source")
+                    item.setToolTip("Current DateCreated EXIF value (empty if missing)")
                 elif col == 5:
                     item.setToolTip("Select date source from available options")
                 elif col == 6:
@@ -301,9 +367,9 @@ class ExifDateUpdaterGUI(QMainWindow):
         # Make table responsive
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Update checkbox
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)  # Filename
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # DateTimeOriginal
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # DateCreated
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # Suggested Date
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # Type
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # DateTimeOriginal
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # DateCreated
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)  # Source (dropdown menu)
         header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)  # Size
         
@@ -519,27 +585,75 @@ class ExifDateUpdaterGUI(QMainWindow):
     
     def on_source_changed(self, row: int, combo_index: int):
         """Handle source selection change in dropdown."""
-        combo = self.file_table.cellWidget(row, 6)  # Source column is now index 6
+        combo = self.file_table.cellWidget(row, 5)  # Source column is now index 5
         if isinstance(combo, (QComboBox, NoScrollComboBox)) and combo_index >= 0:
             # Get the selected source data
             date, source_name = combo.itemData(combo_index)
             
-            # Update the suggested date column
-            date_str = date.strftime("%Y-%m-%d %H:%M:%S")
-            date_item = self.file_table.item(row, 5)  # Suggested date column is now index 5
-            if date_item:
-                date_item.setText(date_str)
-            
-            # Update the MediaFile object if needed
-            if hasattr(self, 'media_files') and row < len(self.media_files):
-                # Find the corresponding file (accounting for filtering)
-                files_to_show = self.get_filtered_files()
+            # Check if manual option was selected (either "Manual..." or "Manual (date)")
+            if source_name == "Manual":
+                # Open manual date dialog
+                current_file = None
+                if hasattr(self, 'media_files') and row < len(self.media_files):
+                    files_to_show = self.get_filtered_files()
+                    if row < len(files_to_show):
+                        current_file = files_to_show[row]
                 
-                if row < len(files_to_show):
-                    file = files_to_show[row]
-                    file.suggested_date = date
-                    file.source = source_name
-    
+                # Use existing suggested date as initial value, if available
+                initial_date = None
+                if current_file and hasattr(current_file, 'suggested_date') and current_file.suggested_date:
+                    initial_date = current_file.suggested_date
+                elif isinstance(date, datetime):
+                    # If we already have a manual date stored in the combo, use that
+                    initial_date = date
+                
+                dialog = ManualDateDialog(self, initial_date)
+                if dialog.exec() == QDialog.DialogCode.Accepted:
+                    # User confirmed the manual date
+                    manual_date = dialog.get_datetime()
+                    
+                    # Update the MediaFile object
+                    if current_file:
+                        current_file.suggested_date = manual_date
+                        current_file.source = "Manual"
+                    
+                    # Update the combo box to show the manual date
+                    date_str = manual_date.strftime("%Y-%m-%d %H:%M:%S")
+                    manual_display = f"Manual ({date_str})"
+                    combo.setItemText(combo_index, manual_display)
+                    combo.setItemData(combo_index, (manual_date, "Manual"))
+                    
+                    # Refresh the row appearance to update red highlighting
+                    self.update_row_appearance(row)
+                    
+                else:
+                    # User cancelled - revert to previous selection
+                    if current_file and hasattr(current_file, 'source') and current_file.source != "Manual":
+                        # Find the previous source in the combo and select it
+                        for i in range(combo.count()):
+                            item_date, item_source = combo.itemData(i)
+                            if item_source == current_file.source:
+                                combo.setCurrentIndex(i)
+                                break
+                    else:
+                        # If no previous source, select the first item (if available)
+                        if combo.count() > 1:  # More than just the manual option
+                            combo.setCurrentIndex(0)
+                
+                return
+            
+            # Handle regular (non-manual) source selection - ensure date is a datetime object
+            if isinstance(date, datetime):
+                # Update the MediaFile object if needed
+                if hasattr(self, 'media_files') and row < len(self.media_files):
+                    # Find the corresponding file (accounting for filtering)
+                    files_to_show = self.get_filtered_files()
+                    
+                    if row < len(files_to_show):
+                        file = files_to_show[row]
+                        file.suggested_date = date
+                        file.source = source_name
+
     def _on_checkbox_changed_simple(self):
         """Simplified checkbox handler - updates appearance and status bar for the file."""
         sender_checkbox = self.sender()
@@ -569,27 +683,13 @@ class ExifDateUpdaterGUI(QMainWindow):
                 checkbox_item.setData(Qt.ItemDataRole.UserRole, sort_value)
                 checkbox_item.setText(str(sort_value))
             
+            # Update row appearance immediately
+            self.update_row_appearance(current_row)
+            
             # Update status bar immediately
             self.update_status_bar()
             
-            # Use QTimer to update appearance after table has potentially resorted
-            from PySide6.QtCore import QTimer
-            QTimer.singleShot(0, lambda: self._update_checkbox_row_appearance(sender_checkbox))
-    
-    def _update_checkbox_row_appearance(self, checkbox):
-        """Find the checkbox's current row and update its appearance after potential resorting."""
-        # Find the current row of this checkbox after any resorting
-        current_row = None
-        for row in range(self.file_table.rowCount()):
-            checkbox_widget = self.file_table.cellWidget(row, 0)
-            if checkbox_widget:
-                table_checkbox = checkbox_widget.findChild(QCheckBox)
-                if table_checkbox is checkbox:
-                    current_row = row
-                    break
-        
-        if current_row is not None:
-            self.update_row_appearance(current_row)
+            # Force repaint to ensure changes are visible
             self.file_table.viewport().repaint()
     
     def _on_table_selection_changed(self):
@@ -601,19 +701,29 @@ class ExifDateUpdaterGUI(QMainWindow):
     
     def update_row_appearance(self, row: int):
         """Update the appearance of a table row based on its checkbox state and output tag selections."""
-        # Get checkbox state
+        # Skip appearance updates during table population to avoid interfering with content display
+        if not self.file_table.isSortingEnabled():
+            return
+            
+        # Get checkbox state - try multiple approaches to be robust
         checkbox_widget = self.file_table.cellWidget(row, 0)
         is_checked = False
+        file = None
+        
         if checkbox_widget:
             checkbox = checkbox_widget.findChild(QCheckBox)
             if checkbox:
                 is_checked = checkbox.isChecked()
+                file = checkbox.property("media_file")
         
-        # Get the file for this row to check date conditions
-        files_to_show = self.get_filtered_files()
-        file = None
-        if row < len(files_to_show):
-            file = files_to_show[row]
+        # If we couldn't get the file from the checkbox, try to get it from the filtered files list
+        if not file:
+            files_to_show = self.get_filtered_files()
+            if row < len(files_to_show):
+                file = files_to_show[row]
+                # Get checkbox state from our mapping if available
+                if file in self.file_checkboxes:
+                    is_checked = self.file_checkboxes[file].isChecked()
         
         # Set colors based on checkbox state and content
         palette = self.palette()
@@ -630,7 +740,7 @@ class ExifDateUpdaterGUI(QMainWindow):
                 
                 # Determine text color based on row selection and column content
                 if not is_checked:
-                    # Grey out non-selected files
+                    # Grey out non-selected files, but still make them visible
                     item.setForeground(disabled_color)
                 else:
                     # For checked files, determine color based on content and checkbox states
@@ -787,26 +897,8 @@ class ExifDateUpdaterGUI(QMainWindow):
                     datetime_created_item.setData(Qt.ItemDataRole.UserRole, 0)  # Sort empty dates to the bottom
             self.file_table.setItem(row, 4, datetime_created_item)
             
-            # Suggested date and source dropdown
+            # Source dropdown
             if file.suggested_date or (hasattr(file, 'available_sources') and file.available_sources):
-                # For files with suggestions, use the suggested date
-                if file.suggested_date:
-                    date_str = file.suggested_date.strftime("%Y-%m-%d %H:%M:%S")
-                    suggested_item = QTableWidgetItem(date_str)
-                    suggested_item.setData(Qt.ItemDataRole.UserRole, file.suggested_date.timestamp())
-                    self.file_table.setItem(row, 5, suggested_item)
-                else:
-                    # For files without suggestions but with available sources, use the first available source as default
-                    if hasattr(file, 'available_sources') and file.available_sources:
-                        default_date, default_source = file.available_sources[0]
-                        date_str = default_date.strftime("%Y-%m-%d %H:%M:%S")
-                        suggested_item = QTableWidgetItem(date_str)
-                        suggested_item.setData(Qt.ItemDataRole.UserRole, default_date.timestamp())
-                        self.file_table.setItem(row, 5, suggested_item)
-                        # Set the file's suggested date to the default for processing
-                        file.suggested_date = default_date
-                        file.source = default_source
-                
                 # Source dropdown
                 source_combo = NoScrollComboBox()
                 source_combo.setToolTip("Select the date source to use for this file")
@@ -823,6 +915,9 @@ class ExifDateUpdaterGUI(QMainWindow):
                         if hasattr(file, 'source') and source_name == file.source:
                             current_source_index = idx
                     
+                    # Add manual option at the end
+                    source_combo.addItem("Manual...", ("manual", "Manual"))
+                    
                     source_combo.setCurrentIndex(current_source_index)
                     
                     # Connect the combo box change event
@@ -833,45 +928,57 @@ class ExifDateUpdaterGUI(QMainWindow):
                     # Fallback if no available_sources but has suggested_date
                     source = getattr(file, 'source', 'Unknown')
                     source_combo.addItem(source, (file.suggested_date, source))
+                    # Also add manual option for files with no available sources
+                    source_combo.addItem("Manual...", ("manual", "Manual"))
                 
-                self.file_table.setCellWidget(row, 6, source_combo)
+                self.file_table.setCellWidget(row, 5, source_combo)
                 
                 # Add hidden item for sorting by source name
                 current_source = getattr(file, 'source', 'Unknown')
                 source_sort_item = QTableWidgetItem(current_source)
                 source_sort_item.setData(Qt.ItemDataRole.UserRole, current_source)
-                self.file_table.setItem(row, 6, source_sort_item)
+                self.file_table.setItem(row, 5, source_sort_item)
             else:
-                no_options_item = QTableWidgetItem("No options available")
-                no_options_item.setData(Qt.ItemDataRole.UserRole, 0)  # Sort to bottom
-                self.file_table.setItem(row, 5, no_options_item)
-                
-                # Empty source dropdown for files without any date options
+                # Source dropdown for files without any date options - still allow manual entry
                 source_combo = NoScrollComboBox()
-                source_combo.setEnabled(False)
-                source_combo.addItem("-")
-                self.file_table.setCellWidget(row, 6, source_combo)
+                source_combo.addItem("Manual...", ("manual", "Manual"))
+                source_combo.setToolTip("Manually enter a date and time for this file")
+                
+                # Connect the combo box change event
+                source_combo.currentIndexChanged.connect(
+                    lambda index, r=row: self.on_source_changed(r, index)
+                )
+                
+                self.file_table.setCellWidget(row, 5, source_combo)
                 
                 # Add hidden item for sorting (empty sources sort to bottom)
-                empty_source_item = QTableWidgetItem("-")
-                empty_source_item.setData(Qt.ItemDataRole.UserRole, "")
-                self.file_table.setItem(row, 6, empty_source_item)
+                empty_source_item = QTableWidgetItem("Manual")
+                empty_source_item.setData(Qt.ItemDataRole.UserRole, "Manual")
+                self.file_table.setItem(row, 5, empty_source_item)
             
             # File size
             size_str = f"{file.size:,} bytes"
             size_item = NumericTableWidgetItem(size_str, file.size)
             size_item.setData(Qt.ItemDataRole.UserRole, file.size)
 
-            self.file_table.setItem(row, 7, size_item)
+            self.file_table.setItem(row, 6, size_item)
         
-        # Update appearance of all rows after population
+        # Re-enable sorting after table population is complete
+        self.file_table.setSortingEnabled(True)
+        
+        # Now that sorting is enabled, update row appearances
+        for row in range(self.file_table.rowCount()):
+            self.update_row_appearance(row)
+        
+        # Update status bar immediately
+        self.update_status_bar()
+    
+    def _update_all_row_appearances(self):
+        """Update the appearance of all rows after table population is complete."""
         for row in range(self.file_table.rowCount()):
             self.update_row_appearance(row)
         # Force immediate GUI rendering
         self.file_table.viewport().repaint()
-        
-        # Re-enable sorting after table population is complete
-        self.file_table.setSortingEnabled(True)
     
     def dry_run_update(self):
         """Start dry run update."""
@@ -973,7 +1080,7 @@ class ExifDateUpdaterGUI(QMainWindow):
         
         # Update each file based on its dropdown selection
         for row in range(self.file_table.rowCount()):
-            combo = self.file_table.cellWidget(row, 6)  # Source column is now index 6
+            combo = self.file_table.cellWidget(row, 5)  # Source column is now index 5
             if isinstance(combo, (QComboBox, NoScrollComboBox)) and combo.currentIndex() >= 0 and row < len(files_to_show):
                 # Get the selected source data
                 date, source_name = combo.itemData(combo.currentIndex())
