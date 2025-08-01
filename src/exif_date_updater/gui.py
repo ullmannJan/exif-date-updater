@@ -297,9 +297,9 @@ class ExifDateUpdaterGUI(QMainWindow):
         table_options_layout.addWidget(self.show_all_files_cb)
         
         # Add option to ignore video files
-        self.ignore_video_files_cb = QCheckBox("Ignore video files during analysis")
+        self.ignore_video_files_cb = QCheckBox("Ignore video files")
         self.ignore_video_files_cb.setChecked(False)
-        self.ignore_video_files_cb.setToolTip("Skip video files completely during folder analysis")
+        self.ignore_video_files_cb.setToolTip("Skip video files during folder analysis")
         table_options_layout.addWidget(self.ignore_video_files_cb)
         
         # Add option to include subfolders

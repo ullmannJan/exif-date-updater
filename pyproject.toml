@@ -1,6 +1,6 @@
 [project]
 name = "exif-date-updater"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A tool to analyze and update missing EXIF date information in image files and extract dates from video filenames"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -35,5 +35,17 @@ test = [
 ]
 
 [build-system]
-requires = ["uv_build>=0.8.3,<0.9.0"]
-build-backend = "uv_build"
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/exif_date_updater/_version.py"
+
+[dependency-groups]
+dev = [
+    "hatch-vcs>=0.5.0",
+    "hatchling>=1.27.0",
+]
