@@ -39,9 +39,18 @@ class ExifUpdater:
             print(f"No suggested date for {media_file.name}")
             return False
         
-        if not media_file.missing_dates:
-            print(f"No missing dates for {media_file.name}")
-            return False
+        # Check if there's anything to update
+        needs_datetime_original_update = (update_datetime_original and 
+                                        (not media_file.datetime_original or 
+                                         abs(media_file.datetime_original.timestamp() - media_file.suggested_date.timestamp()) > 1.0))
+        
+        needs_date_created_update = (update_date_created and 
+                                   (not media_file.date_created or 
+                                    abs(media_file.date_created.timestamp() - media_file.suggested_date.timestamp()) > 1.0))
+        
+        if not (needs_datetime_original_update or needs_date_created_update):
+            print(f"No updates needed for {media_file.name} - dates are already correct")
+            return True  # Consider this successful since no changes are needed
         
         try:
             if dry_run:
@@ -137,18 +146,30 @@ class ExifUpdater:
                 # Create new EXIF structure
                 exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
             
-            # Update DateTimeOriginal if requested and missing
-            if (update_datetime_original and 
-                'DateTimeOriginal' in media_file.missing_dates):
+            # Check what needs to be updated
+            needs_datetime_original_update = (update_datetime_original and 
+                                            (not media_file.datetime_original or 
+                                             abs(media_file.datetime_original.timestamp() - media_file.suggested_date.timestamp()) > 1.0))
+            
+            needs_date_created_update = (update_date_created and 
+                                       (not media_file.date_created or 
+                                        abs(media_file.date_created.timestamp() - media_file.suggested_date.timestamp()) > 1.0))
+            
+            # Update DateTimeOriginal if needed
+            if needs_datetime_original_update:
                 exif_dict["Exif"][piexif.ExifIFD.DateTimeOriginal] = exif_date_str
                 print(f"  - Setting DateTimeOriginal: {exif_date_str}")
             
-            # Update DateCreated if requested and missing
-            if (update_date_created and 
-                'DateCreated' in media_file.missing_dates):
+            # Update DateCreated if needed
+            if needs_date_created_update:
                 exif_dict["0th"][piexif.ImageIFD.DateTime] = exif_date_str
                 exif_dict["Exif"][piexif.ExifIFD.DateTimeDigitized] = exif_date_str
                 print(f"  - Setting DateTimeDigitized: {exif_date_str}")
+            
+            # Only write EXIF data if we made changes
+            if not (needs_datetime_original_update or needs_date_created_update):
+                print(f"  - No EXIF changes needed for {media_file.name}")
+                return True
             
             # Convert back to bytes and save
             exif_bytes = piexif.dump(exif_dict)
