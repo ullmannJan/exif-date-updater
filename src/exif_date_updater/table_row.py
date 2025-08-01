@@ -3,7 +3,7 @@ Table row data structure for the EXIF Date Updater GUI.
 """
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Callable
 from datetime import datetime
 
 from PySide6.QtWidgets import QCheckBox, QComboBox
@@ -23,10 +23,22 @@ class TableRow:
     # Cached properties
     _is_selected: bool = False
     
+    # Callback for notifying the GUI of changes
+    _update_callback: Optional[Callable[['TableRow'], None]] = None
+    
     def __post_init__(self):
         """Initialize derived properties after dataclass creation."""
         # Initially select files that have missing dates and can be updated
         self._is_selected = bool(self.media_file.missing_dates and self.media_file.suggested_date)
+    
+    def set_update_callback(self, callback: Callable[['TableRow'], None]):
+        """Set the callback function to be called when the row needs to be updated."""
+        self._update_callback = callback
+    
+    def _notify_update(self):
+        """Notify the GUI that this row needs to be updated."""
+        if self._update_callback:
+            self._update_callback(self)
     
     @property
     def checkbox(self) -> QCheckBox:
@@ -58,9 +70,10 @@ class TableRow:
     
     @is_selected.setter
     def is_selected(self, selected: bool):
-        """Set the selection state of this row."""
-        self._is_selected = selected
-        # Note: Checkbox state will be updated when the checkbox is created
+        """Set the selection state of this row and notify the GUI of the change."""
+        if self._is_selected != selected:
+            self._is_selected = selected
+            self._notify_update()  # Notify GUI that this row needs updating
     
     @property
     def filename(self) -> str:
@@ -230,6 +243,7 @@ class TableRow:
             if isinstance(date, datetime):
                 self.media_file.suggested_date = date
                 self.media_file.source = source_name
+                self._notify_update()  # Notify GUI that this row needs updating
     
     def __str__(self) -> str:
         """String representation for debugging."""

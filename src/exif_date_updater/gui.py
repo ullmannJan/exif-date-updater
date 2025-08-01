@@ -529,6 +529,8 @@ class ExifDateUpdaterGUI(QMainWindow):
         
         for media_file in self.media_files:
             row = TableRow(media_file=media_file)
+            # Set up the update callback so the row can notify us of changes
+            row.set_update_callback(self._on_table_row_updated)
             self.table_rows.append(row)
     
     def on_analysis_error(self, error_msg: str):
@@ -593,18 +595,20 @@ class ExifDateUpdaterGUI(QMainWindow):
                 print(f"Warning: Invalid data format for combo index {combo_index} in row {row}: {item_data}")
                 return
             
+            # Get the TableRow object for this visual row
+            table_row = self.get_table_row_for_visual_row(row)
+            if not table_row:
+                print(f"Warning: Could not find TableRow for visual row {row}")
+                return
+            
             # Check if manual option was selected (either "Manual..." or "Manual (date)")
             if source_name == "Manual":
                 # Open manual date dialog
-                current_file = None
-                if hasattr(self, 'media_files') and row < self.file_table.rowCount():
-                    table_row = self.get_table_row_for_visual_row(row)
-                    if table_row:
-                        current_file = table_row.media_file
+                current_file = table_row.media_file
                 
                 # Use existing suggested date as initial value, if available
                 initial_date = None
-                if current_file and hasattr(current_file, 'suggested_date') and current_file.suggested_date:
+                if hasattr(current_file, 'suggested_date') and current_file.suggested_date:
                     initial_date = current_file.suggested_date
                 elif isinstance(date, datetime):
                     # If we already have a manual date stored in the combo, use that
@@ -615,15 +619,9 @@ class ExifDateUpdaterGUI(QMainWindow):
                     # User confirmed the manual date
                     manual_date = dialog.get_datetime()
                     
-                    # Temporarily disable sorting to prevent row reordering during update
-                    was_sorting_enabled = self.file_table.isSortingEnabled()
-                    if was_sorting_enabled:
-                        self.file_table.setSortingEnabled(False)
-                    
                     # Update the MediaFile object
-                    if current_file:
-                        current_file.suggested_date = manual_date
-                        current_file.source = "Manual"
+                    current_file.suggested_date = manual_date
+                    current_file.source = "Manual"
                     
                     # Update the combo box to show the manual date
                     date_str = manual_date.strftime("%Y-%m-%d %H:%M:%S")
@@ -631,24 +629,13 @@ class ExifDateUpdaterGUI(QMainWindow):
                     combo.setItemText(combo_index, manual_display)
                     combo.setItemData(combo_index, (manual_date, "Manual"))
                     
-                    # Re-enable sorting if it was enabled
-                    if was_sorting_enabled:
-                        self.file_table.setSortingEnabled(True)
-                    
-                    # Find the current visual row for this table_row after sorting
-                    table_row = self.get_table_row_for_visual_row(row)
-                    if table_row:
-                        new_visual_row = self.find_visual_row_for_table_row(table_row)
-                        if new_visual_row is not None:
-                            print(f"DEBUG: Manual date - Found new visual row {new_visual_row} for {table_row.media_file.name}")
-                            self.update_row_appearance(new_visual_row)
-                            self.update_date_columns_for_row(new_visual_row)
-                        else:
-                            print(f"DEBUG: Manual date - Could not find new visual row for {table_row.media_file.name}")
+                    # Notify the TableRow that it has been updated
+                    # This will automatically handle the GUI updates through the callback
+                    table_row._notify_update()
                     
                 else:
                     # User cancelled - revert to previous selection
-                    if current_file and hasattr(current_file, 'source') and current_file.source != "Manual":
+                    if hasattr(current_file, 'source') and current_file.source != "Manual":
                         # Find the previous source in the combo and select it
                         for i in range(combo.count()):
                             item_date, item_source = combo.itemData(i)
@@ -664,37 +651,100 @@ class ExifDateUpdaterGUI(QMainWindow):
             
             # Handle regular (non-manual) source selection - ensure date is a datetime object
             if isinstance(date, datetime):
-                # Update the MediaFile object if needed
-                if hasattr(self, 'media_files') and row < self.file_table.rowCount():
-                    # Find the corresponding file (accounting for sorting)
-                    table_row = self.get_table_row_for_visual_row(row)
-                    print(f"DEBUG: Found table_row for visual row {row}: {table_row.media_file.name if table_row else 'None'}")
-                    
-                    if table_row:
-                        file = table_row.media_file
-                        print(f"DEBUG: Updating {file.name} - Old suggested: {file.suggested_date}, New: {date}")
-                        
-                        # Temporarily disable sorting to prevent row reordering during update
-                        was_sorting_enabled = self.file_table.isSortingEnabled()
-                        if was_sorting_enabled:
-                            self.file_table.setSortingEnabled(False)
-                        
-                        file.suggested_date = date
-                        file.source = source_name
-                        print(f"DEBUG: Updated {file.name} - New suggested: {file.suggested_date}")
-                        
-                        # Re-enable sorting if it was enabled
-                        if was_sorting_enabled:
-                            self.file_table.setSortingEnabled(True)
-                        
-                        # Find the new visual row position after sorting and update that row
-                        new_visual_row = self.find_visual_row_for_table_row(table_row)
-                        if new_visual_row is not None:
-                            print(f"DEBUG: Found new visual row {new_visual_row} for {file.name}")
-                            self.update_date_columns_for_row(new_visual_row)
-                            self.update_row_appearance(new_visual_row)
-                        else:
-                            print(f"DEBUG: Could not find new visual row for {file.name}")
+                file = table_row.media_file
+                print(f"DEBUG: Updating {file.name} - Old suggested: {file.suggested_date}, New: {date}")
+                
+                file.suggested_date = date
+                file.source = source_name
+                print(f"DEBUG: Updated {file.name} - New suggested: {file.suggested_date}")
+                
+                # Notify the TableRow that it has been updated
+                # This will automatically handle the GUI updates through the callback
+                table_row._notify_update()
+
+    def on_source_changed_by_table_row(self, table_row: 'TableRow', combo_index: int):
+        """Handle source selection change using TableRow object directly (sorting-safe)."""
+        print(f"DEBUG: on_source_changed_by_table_row called for {table_row.filename}, combo_index={combo_index}")
+        
+        combo = table_row.source_combo
+        if not isinstance(combo, (QComboBox, NoScrollComboBox)) or combo_index < 0:
+            return
+        
+        # Get the selected source data
+        item_data = combo.itemData(combo_index)
+        
+        # Handle case where itemData returns None
+        if item_data is None:
+            print(f"Warning: No data found for combo index {combo_index} for {table_row.filename}")
+            return
+        
+        # Ensure we can unpack the data
+        try:
+            date, source_name = item_data
+        except (TypeError, ValueError):
+            print(f"Warning: Invalid data format for combo index {combo_index} for {table_row.filename}: {item_data}")
+            return
+        
+        # Check if manual option was selected (either "Manual..." or "Manual (date)")
+        if source_name == "Manual":
+            # Open manual date dialog
+            current_file = table_row.media_file
+            
+            # Use existing suggested date as initial value, if available
+            initial_date = None
+            if hasattr(current_file, 'suggested_date') and current_file.suggested_date:
+                initial_date = current_file.suggested_date
+            elif isinstance(date, datetime):
+                # If we already have a manual date stored in the combo, use that
+                initial_date = date
+            
+            dialog = ManualDateDialog(self, initial_date)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                # User confirmed the manual date
+                manual_date = dialog.get_datetime()
+                
+                # Update the MediaFile object
+                current_file.suggested_date = manual_date
+                current_file.source = "Manual"
+                
+                # Update the combo box to show the manual date
+                date_str = manual_date.strftime("%Y-%m-%d %H:%M:%S")
+                manual_display = f"Manual ({date_str})"
+                combo.setItemText(combo_index, manual_display)
+                combo.setItemData(combo_index, (manual_date, "Manual"))
+                
+                # Notify the TableRow that it has been updated
+                # This will automatically handle the GUI updates through the callback
+                table_row._notify_update()
+                
+            else:
+                # User cancelled - revert to previous selection
+                if hasattr(current_file, 'source') and current_file.source != "Manual":
+                    # Find the previous source in the combo and select it
+                    for i in range(combo.count()):
+                        item_date, item_source = combo.itemData(i)
+                        if item_source == current_file.source:
+                            combo.setCurrentIndex(i)
+                            break
+                else:
+                    # If no previous source, select the first item (if available)
+                    if combo.count() > 1:  # More than just the manual option
+                        combo.setCurrentIndex(0)
+            
+            return
+        
+        # Handle regular (non-manual) source selection - ensure date is a datetime object
+        if isinstance(date, datetime):
+            file = table_row.media_file
+            print(f"DEBUG: Updating {file.name} - Old suggested: {file.suggested_date}, New: {date}")
+            
+            file.suggested_date = date
+            file.source = source_name
+            print(f"DEBUG: Updated {file.name} - New suggested: {file.suggested_date}")
+            
+            # Notify the TableRow that it has been updated
+            # This will automatically handle the GUI updates through the callback
+            table_row._notify_update()
 
     def _on_checkbox_changed_simple(self):
         """Simplified checkbox handler using TableRow."""
@@ -707,39 +757,47 @@ class ExifDateUpdaterGUI(QMainWindow):
         if not table_row:
             return
         
-        # Find the visual row that contains this checkbox widget
-        current_row = None
-        for row_idx in range(self.file_table.rowCount()):
-            cell_widget = self.file_table.cellWidget(row_idx, 0)
-            if cell_widget:
-                # Check if this cell widget contains our checkbox
-                checkbox_layout = cell_widget.layout()
-                if checkbox_layout and checkbox_layout.count() > 0:
-                    layout_item = checkbox_layout.itemAt(0)
-                    if layout_item:
-                        checkbox_in_cell = layout_item.widget()
-                        if checkbox_in_cell is sender_checkbox:
-                            current_row = row_idx
-                            break
-        
-        if current_row is not None:
-            # Update the TableRow's internal state
-            table_row._is_selected = sender_checkbox.isChecked()
+        # Update the TableRow's selection state
+        # This will automatically trigger the _on_table_row_updated callback
+        table_row.is_selected = sender_checkbox.isChecked()
+    
+    def _on_table_row_updated(self, table_row: 'TableRow'):
+        """Handle updates from TableRow objects - update the visual row without relying on indices."""
+        # Find the current visual row for this table_row
+        visual_row = self.find_visual_row_for_table_row(table_row)
+        if visual_row is not None:
+            # Temporarily disable sorting to prevent row reordering during update
+            was_sorting_enabled = self.file_table.isSortingEnabled()
+            if was_sorting_enabled:
+                self.file_table.setSortingEnabled(False)
             
             # Update checkbox sort data
-            checkbox_item = self.file_table.item(current_row, 0)
+            checkbox_item = self.file_table.item(visual_row, 0)
             if checkbox_item:
-                sort_value = 1 if sender_checkbox.isChecked() else 0
+                sort_value = 1 if table_row.is_selected else 0
                 checkbox_item.setData(Qt.ItemDataRole.UserRole, sort_value)
                 checkbox_item.setText(str(sort_value))
             
-            # Update row appearance immediately
-            self.update_row_appearance(current_row)
+            # Update date columns to reflect any changes
+            self.update_date_columns_for_row(visual_row)
             
-            # Update date columns to reflect selection state change
-            self.update_date_columns_for_row(current_row)
+            # Re-enable sorting if it was enabled
+            if was_sorting_enabled:
+                self.file_table.setSortingEnabled(True)
+                
+                # Find the new visual row after sorting (might have changed)
+                new_visual_row = self.find_visual_row_for_table_row(table_row)
+                if new_visual_row is not None:
+                    # Update row appearance at the new position
+                    self.update_row_appearance(new_visual_row)
+                else:
+                    # Fallback: update all row appearances
+                    self._update_all_row_appearances()
+            else:
+                # Update row appearance at current position
+                self.update_row_appearance(visual_row)
             
-            # Update status bar immediately
+            # Update status bar
             self.update_status_bar()
             
             # Force repaint to ensure changes are visible
@@ -992,9 +1050,9 @@ class ExifDateUpdaterGUI(QMainWindow):
                 # Store reference in TableRow
                 table_row.source_combo = source_combo
                 
-                # Connect the combo box change event
+                # Connect the combo box change event - use TableRow object to avoid row index issues after sorting
                 source_combo.currentIndexChanged.connect(
-                    lambda index, r=row: self.on_source_changed(r, index)
+                    lambda index, table_row=table_row: self.on_source_changed_by_table_row(table_row, index)
                 )
                 
                 self.file_table.setCellWidget(row, 5, source_combo)
@@ -1012,9 +1070,9 @@ class ExifDateUpdaterGUI(QMainWindow):
                 # Store reference in TableRow
                 table_row.source_combo = source_combo
                 
-                # Connect the combo box change event
+                # Connect the combo box change event - use TableRow object to avoid row index issues after sorting
                 source_combo.currentIndexChanged.connect(
-                    lambda index, r=row: self.on_source_changed(r, index)
+                    lambda index, table_row=table_row: self.on_source_changed_by_table_row(table_row, index)
                 )
                 
                 self.file_table.setCellWidget(row, 5, source_combo)
@@ -1100,16 +1158,20 @@ class ExifDateUpdaterGUI(QMainWindow):
     def select_all_files(self):
         """Select all files that can be updated."""
         rows_to_show = self.get_filtered_rows()
+        # Temporarily disable callbacks to avoid multiple updates
         for row in rows_to_show:
             if row.can_be_updated:
-                row.is_selected = True
+                row._is_selected = True  # Set directly to avoid triggering callback
+        # Update all at once
         self.update_all_checkbox_states()
     
     def select_no_files(self):
         """Deselect all files."""
         rows_to_show = self.get_filtered_rows()
+        # Temporarily disable callbacks to avoid multiple updates
         for row in rows_to_show:
-            row.is_selected = False
+            row._is_selected = False  # Set directly to avoid triggering callback
+        # Update all at once
         self.update_all_checkbox_states()
     
     def toggle_selected_rows(self):
@@ -1121,7 +1183,7 @@ class ExifDateUpdaterGUI(QMainWindow):
             table_row = self.get_table_row_for_visual_row(row)
             if table_row:
                 table_row.is_selected = not table_row.is_selected
-        self.update_all_checkbox_states()
+        # Note: Individual callbacks will handle updates for each toggled row
     
     def get_selected_files(self):
         """Get list of files selected for update."""
